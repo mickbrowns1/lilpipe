@@ -1,0 +1,18 @@
+{
+  "name": "Cato event to OCSF (serializer)",
+  "source": {
+    "type": "record",
+    "text": "{\n  \"event_time\": \"2021-12-01T15:07:11Z\",\n  \"account_id\": \"1714\",\n  \"action\": \"Block\",\n  \"dest_ip\": \"2.2.2.2\",\n  \"dest_is_site_or_vpn\": \"Site\",\n  \"dest_port\": \"22\",\n  \"event_count\": \"1\",\n  \"event_sub_type\": \"IPS\",\n  \"event_type\": \"Security\",\n  \"internalId\": \"1a2b3c4d5e6d\",\n  \"ip_protocol\": \"TCP\",\n  \"mitre_attack_subtechniques\": \"\",\n  \"mitre_attack_tactics\": \"\",\n  \"mitre_attack_techniques\": \"\",\n  \"os_type\": \"OS_UNKNOWN\",\n  \"pop_name\": \"Dublin\",\n  \"risk_level\": \"Medium\",\n  \"rule\": \"3605\",\n  \"rule_id\": \"3605\",\n  \"signature_id\": \"feed_ips15_ssh\",\n  \"src_country\": \"China\",\n  \"src_ip\": \"1.1.1.1\",\n  \"src_is_site_or_vpn\": \"Site\",\n  \"src_port\": \"47046\",\n  \"src_site\": \"Reflector\",\n  \"threat_name\": \"IP reputation based signature - Network Scanner\",\n  \"threat_reference\": \"https://support.catonetworks.com/hc/en-us/articles/360011568478\",\n  \"threat_type\": \"Reputation\",\n  \"time\": \"1650596005910\",\n  \"traffic_direction\": \"INBOUND\",\n  \"event_timestamp\": \"2022-04-22T02:53:25Z\"\n}"
+  },
+  "transforms": [
+    {
+      "type": "lua",
+      "path": "",
+      "code": "-- Starter serializer (edit me). Input: one raw record table. Output: a flat OCSF table.\n-- Runs here on LuaJIT, not inside the DPM runtime, so only json and log modules exist.\nlocal VENDOR_NAME = \"Cato Networks\"\nlocal PRODUCT_NAME = \"Cato SASE\"\nlocal OCSF_VERSION = \"1.1.0\"\n\n-- Raw fields this serializer maps. Everything else is kept under unmapped.\nlocal MAPPED = { src_ip = true, dest_ip = true, src_port = true, dest_port = true,\n                 ip_protocol = true, action = true, risk_level = true, time = true }\n\nlocal SEVERITY = { Low = 2, Medium = 3, High = 4, Critical = 5 }\n\nfunction processEvent(record)\n    local out = {}\n    out[\"class_uid\"] = 4001\n    out[\"category_uid\"] = 4\n    out[\"activity_id\"] = 6\n    out[\"type_uid\"] = 4001 * 100 + 6\n    out[\"time\"] = tonumber(record.time) or 0\n    out[\"severity_id\"] = SEVERITY[record.risk_level] or 0\n    out[\"action\"] = record.action\n    out[\"src_endpoint.ip\"] = record.src_ip\n    out[\"src_endpoint.port\"] = tonumber(record.src_port)\n    out[\"dst_endpoint.ip\"] = record.dest_ip\n    out[\"dst_endpoint.port\"] = tonumber(record.dest_port)\n    out[\"connection_info.protocol_name\"] = record.ip_protocol\n\n    out[\"metadata.version\"] = OCSF_VERSION\n    out[\"metadata.product.vendor_name\"] = VENDOR_NAME\n    out[\"metadata.product.name\"] = PRODUCT_NAME\n    out[\"dataSource.category\"] = \"security\"\n    out[\"dataSource.vendor\"] = VENDOR_NAME\n    out[\"dataSource.name\"] = PRODUCT_NAME\n\n    local unmapped = {}\n    for k, v in pairs(record) do\n        if not MAPPED[k] then unmapped[k] = v end\n    end\n    out[\"unmapped\"] = unmapped\n    return out\nend\n"
+    }
+  ],
+  "sink": {
+    "type": "devnull",
+    "filename": "pipeline-output.ndjson"
+  }
+}

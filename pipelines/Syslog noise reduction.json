@@ -1,0 +1,23 @@
+{
+  "name": "Syslog noise reduction",
+  "source": {
+    "type": "generator",
+    "format": "syslog",
+    "count": 5000,
+    "lines": ""
+  },
+  "transforms": [
+    {
+      "type": "remap",
+      "source": ". |= parse_syslog!(.message)"
+    },
+    {
+      "type": "filter",
+      "condition": "!includes([\"debug\", \"info\", \"notice\"], .severity)"
+    }
+  ],
+  "sink": {
+    "type": "devnull",
+    "filename": "pipeline-output.ndjson"
+  }
+}

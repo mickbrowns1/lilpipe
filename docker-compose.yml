@@ -1,0 +1,16 @@
+# Start:  docker compose up -d --build     Stop:  docker compose down
+# Then open http://127.0.0.1:8790
+services:
+  pipeline-lab:
+    build: .
+    image: pipeline-lab:latest
+    container_name: pipeline-lab
+    restart: unless-stopped
+    ports:
+      # Published on this machine only. Do not change 127.0.0.1 to 0.0.0.0:
+      # the app can run Vector and Lua code, so it must not be reachable from the network.
+      - "127.0.0.1:8790:8790"
+    volumes:
+      - ./pipelines:/app/pipelines   # saved pipelines (survive rebuilds)
+      - ./output:/app/output         # files written by the "Save to file" destination
+      - ./data:/data:ro              # put log files and serializers here; use /data/name in the app

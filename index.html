@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipeline Lab</title>
+<style>
+:root{
+  --bg:#f5f6f8; --panel:#ffffff; --panel2:#f0f2f5; --text:#1b1f27; --muted:#667085; --line:#dde1e7;
+  --accent:#0f766e; --accent-ink:#ffffff; --src:#2563eb; --xf:#7c3aed; --dst:#15803d;
+  --warn:#b45309; --warn-bg:#fef3c7; --err:#b42318; --err-bg:#fee4e2; --ok-bg:#dcfce7;
+  --code:#f6f8fa; --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1318; --panel:#171c23; --panel2:#1e242d; --text:#e6e9ee; --muted:#9aa4b2; --line:#2b323d;
+    --accent:#2dd4bf; --accent-ink:#06201d; --src:#60a5fa; --xf:#a78bfa; --dst:#4ade80;
+    --warn:#fbbf24; --warn-bg:#3a2e0c; --err:#fda29b; --err-bg:#3b1512; --ok-bg:#12301c;
+    --code:#10151b; --shadow:none; color-scheme: dark;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px}
+header .sub{color:var(--muted);font-size:12px}
+header .sp{flex:1}
+.btn{border:1px solid var(--line);background:var(--panel);padding:6px 12px;border-radius:7px;cursor:pointer}
+.btn:hover{background:var(--panel2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn[disabled]{opacity:.55;cursor:default}
+.btn.small{padding:3px 8px;font-size:12px}
+.btn.danger{color:var(--err)}
+.layout{display:grid;grid-template-columns:210px minmax(0,1fr) 340px;gap:14px;padding:14px;align-items:start}
+@media (max-width:1150px){.layout{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0;padding:10px 12px;border-bottom:1px solid var(--line)}
+.pad{padding:12px}
+.side .item{display:flex;align-items:center;gap:6px;padding:7px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+.side .item:last-child{border-bottom:0}
+.side .item:hover{background:var(--panel2)}
+.side .item .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side .empty{padding:12px;color:var(--muted);font-size:13px}
+.x{border:0;background:none;color:var(--muted);cursor:pointer;padding:0 4px;font-size:16px;line-height:1}
+.x:hover{color:var(--err)}
+.nameRow{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.nameRow input{flex:1;min-width:0}
+input[type=text],input[type=number],select,textarea{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:6px 8px}
+input:focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:0}
+textarea{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical;min-height:90px}
+label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+label:first-child{margin-top:0}
+.hint{font-size:12px;color:var(--muted);margin-top:4px}
+.banner{margin:14px 14px 0;padding:10px 12px;border-radius:9px;border:1px solid var(--line)}
+.banner.warn{background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+.banner.err{background:var(--err-bg);border-color:color-mix(in srgb,var(--err) 40%,transparent)}
+.banner.ok{background:var(--ok-bg)}
+.banner pre{margin:8px 0 0;white-space:pre-wrap;font:12px/1.4 ui-monospace,Menlo,monospace}
+.banner code{font:12px ui-monospace,Menlo,monospace;background:var(--code);padding:2px 6px;border-radius:5px;border:1px solid var(--line);word-break:break-all}
+.flow{display:flex;align-items:stretch;gap:0;padding:16px 12px;overflow-x:auto}
+.node{flex:0 0 218px;border:1px solid var(--line);border-left:4px solid var(--src);border-radius:10px;background:var(--panel);padding:10px 12px;cursor:pointer;box-shadow:var(--shadow);position:relative;min-height:116px}
+.node.xf{border-left-color:var(--xf)}
+.node.dst{border-left-color:var(--dst)}
+.node.sel{outline:2px solid var(--accent);outline-offset:1px}
+.node .kind{font-size:10.5px;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);font-weight:650}
+.node .ttl{font-weight:650;margin:2px 0 4px}
+.node .sum{font-size:12px;color:var(--muted);overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;word-break:break-word}
+.node .stat{margin-top:8px;padding-top:7px;border-top:1px dashed var(--line);font-size:12px}
+.node .stat b{font-variant-numeric:tabular-nums}
+.pill{display:inline-block;padding:0 6px;border-radius:999px;font-size:11px;font-weight:600;margin-left:4px}
+.pill.drop{background:var(--warn-bg);color:var(--warn)}
+.pill.same{background:var(--panel2);color:var(--muted)}
+.link{flex:0 0 46px;display:flex;align-items:center;justify-content:center;position:relative}
+.link::before{content:"";position:absolute;left:0;right:0;top:50%;height:2px;background:var(--line)}
+.link .plus{position:relative;z-index:1;width:24px;height:24px;border-radius:50%;border:1px solid var(--line);background:var(--panel);cursor:pointer;line-height:20px;text-align:center;color:var(--muted);padding:0}
+.link .plus:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.menu{position:absolute;z-index:5;top:34px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.18);width:230px;overflow:hidden}
+.menu button{display:block;width:100%;text-align:left;border:0;background:none;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--line)}
+.menu button:last-child{border-bottom:0}
+.menu button:hover{background:var(--panel2)}
+.menu small{display:block;color:var(--muted);font-size:11.5px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;padding:12px}
+.tile{background:var(--panel2);border-radius:9px;padding:9px 11px}
+.tile .v{font-size:19px;font-weight:650;font-variant-numeric:tabular-nums}
+.tile .l{font-size:11.5px;color:var(--muted)}
+.tabs{display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{border:0;background:none;padding:9px 11px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;white-space:nowrap}
+.tab.on{color:var(--text);border-bottom-color:var(--accent);font-weight:600}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer}
+.chip.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+pre.ev{margin:0 0 8px;background:var(--code);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:12px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}
+.muted{color:var(--muted)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.insp-actions{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap}
+.kv{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:3px 0}
+.drow{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.drow:last-child{border-bottom:0}
+.tag{display:inline-block;min-width:84px;text-align:center;padding:1px 6px;border-radius:5px;font-size:10.5px;font-weight:700;letter-spacing:.5px}
+.k-moved{background:#dbeafe;color:#1d4ed8}.k-changed{background:#fef3c7;color:#92400e}.k-retyped{background:#ccfbf1;color:#0f766e}
+.k-unmapped{background:var(--panel2);color:var(--muted)}.k-dropped{background:#fee2e2;color:#b42318}.k-added{background:#dcfce7;color:#15803d}
+.k-empty,.k-unchanged{background:var(--panel2);color:var(--muted)}
+@media (prefers-color-scheme: dark){
+  .k-moved{background:#1e3a5f;color:#93c5fd}.k-changed{background:#3a2e0c;color:#fbbf24}.k-retyped{background:#0f3a35;color:#5eead4}
+  .k-dropped{background:#3b1512;color:#fda29b}.k-added{background:#12301c;color:#86efac}
+}
+.pth{font:12.5px ui-monospace,Menlo,monospace;word-break:break-all}
+.val{font:12px ui-monospace,Menlo,monospace;color:var(--muted);word-break:break-all}
+.arr{color:var(--muted)}
+.chk{display:grid;grid-template-columns:52px 1fr auto;gap:4px 10px;font-size:13px;margin:8px 0 14px}
+.pass{color:var(--dst);font-weight:700}.fail{color:var(--err);font-weight:700}
+.lint{margin:8px 0;padding:8px 10px;border-radius:8px;background:var(--warn-bg);font-size:12.5px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg button{border:0;background:var(--panel);padding:3px 10px;cursor:pointer;font-size:12px}
+.seg button.on{background:var(--accent);color:var(--accent-ink)}
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Pipeline Lab</h1>
+  <span class="sub" id="vecInfo">checking Vector&hellip;</span>
+  <span class="sp"></span>
+  <button class="btn" data-action="config">View config</button>
+  <button class="btn" data-action="validate">Validate</button>
+  <button class="btn primary" id="runBtn" data-action="run">&#9654; Run pipeline</button>
+</header>
+
+<div id="banner"></div>
+
+<div class="layout">
+  <aside class="card side">
+    <h2>Saved pipelines</h2>
+    <div class="nameRow">
+      <input type="text" id="pname" placeholder="Pipeline name" maxlength="60">
+      <button class="btn small" data-action="save">Save</button>
+    </div>
+    <div id="saved"></div>
+  </aside>
+
+  <main style="min-width:0">
+    <section class="card">
+      <h2>Pipeline</h2>
+      <div class="flow" id="flow"></div>
+    </section>
+    <section class="card" id="results" style="margin-top:14px;display:none">
+      <h2>Results</h2>
+      <div class="tiles" id="tiles"></div>
+      <div class="tabs" id="tabs"></div>
+      <div class="pad" id="tabBody"></div>
+    </section>
+  </main>
+
+  <aside class="card">
+    <h2 id="inspTitle">Settings</h2>
+    <div class="pad" id="insp"></div>
+  </aside>
+</div>
+
+<script>
+"use strict";
+
+// ---------- helpers ----------
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtN = (n) => Number(n || 0).toLocaleString();
+function fmtB(n){ n = Number(n||0); if(n<1024) return n+" B"; if(n<1048576) return (n/1024).toFixed(1)+" KB"; return (n/1048576).toFixed(2)+" MB"; }
+function pct(a,b){ if(!a) return 0; return (1 - b/a) * 100; }
+async function api(path, opts){
+  let r, data;
+  try { r = await fetch(path, opts); } catch(e){ throw new Error("Cannot reach the local server. Is `python3 server.py` still running?"); }
+  try { data = await r.json(); } catch(e){ data = {error: "Unexpected response from the server."}; }
+  if(!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+const postJSON = (path, body) => api(path, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+
+// ---------- model ----------
+const XF = {
+  filter: {label:"Filter", desc:"Keep events where a VRL condition is true"},
+  remap:  {label:"Remap (VRL)", desc:"Parse, rename, add or delete fields"},
+  sample: {label:"Sample", desc:"Keep 1 of every N events"},
+  dedupe: {label:"Dedupe", desc:"Drop repeats of the same field values"},
+  lua:    {label:"Lua serializer", desc:"Your DPM processEvent(record), with a before/after view"},
+};
+const CATO_SAMPLE = JSON.stringify({
+  "event_time": "2021-12-01T15:07:11Z", "account_id": "1714", "action": "Block", "dest_ip": "2.2.2.2",
+  "dest_is_site_or_vpn": "Site", "dest_port": "22", "event_count": "1", "event_sub_type": "IPS",
+  "event_type": "Security", "internalId": "1a2b3c4d5e6d", "ip_protocol": "TCP",
+  "mitre_attack_subtechniques": "", "mitre_attack_tactics": "", "mitre_attack_techniques": "",
+  "os_type": "OS_UNKNOWN", "pop_name": "Dublin", "risk_level": "Medium", "rule": "3605", "rule_id": "3605",
+  "signature_id": "feed_ips15_ssh", "src_country": "China", "src_ip": "1.1.1.1", "src_is_site_or_vpn": "Site",
+  "src_port": "47046", "src_site": "Reflector", "threat_name": "IP reputation based signature - Network Scanner",
+  "threat_reference": "https://support.catonetworks.com/hc/en-us/articles/360011568478",
+  "threat_type": "Reputation", "time": "1650596005910", "traffic_direction": "INBOUND",
+  "event_timestamp": "2022-04-22T02:53:25Z"
+}, null, 2);
+const STARTER_LUA = `-- Starter serializer (edit me). Input: one raw record table. Output: a flat OCSF table.
+-- Runs here on LuaJIT, not inside the DPM runtime, so only json and log modules exist.
+local VENDOR_NAME = "Cato Networks"
+local PRODUCT_NAME = "Cato SASE"
+local OCSF_VERSION = "1.1.0"
+
+-- Raw fields this serializer maps. Everything else is kept under unmapped.
+local MAPPED = { src_ip = true, dest_ip = true, src_port = true, dest_port = true,
+                 ip_protocol = true, action = true, risk_level = true, time = true }
+
+local SEVERITY = { Low = 2, Medium = 3, High = 4, Critical = 5 }
+
+function processEvent(record)
+    local out = {}
+    out["class_uid"] = 4001
+    out["category_uid"] = 4
+    out["activity_id"] = 6
+    out["type_uid"] = 4001 * 100 + 6
+    out["time"] = tonumber(record.time) or 0
+    out["severity_id"] = SEVERITY[record.risk_level] or 0
+    out["action"] = record.action
+    out["src_endpoint.ip"] = record.src_ip
+    out["src_endpoint.port"] = tonumber(record.src_port)
+    out["dst_endpoint.ip"] = record.dest_ip
+    out["dst_endpoint.port"] = tonumber(record.dest_port)
+    out["connection_info.protocol_name"] = record.ip_protocol
+
+    out["metadata.version"] = OCSF_VERSION
+    out["metadata.product.vendor_name"] = VENDOR_NAME
+    out["metadata.product.name"] = PRODUCT_NAME
+    out["dataSource.category"] = "security"
+    out["dataSource.vendor"] = VENDOR_NAME
+    out["dataSource.name"] = PRODUCT_NAME
+
+    local unmapped = {}
+    for k, v in pairs(record) do
+        if not MAPPED[k] then unmapped[k] = v end
+    end
+    out["unmapped"] = unmapped
+    return out
+end
+`;
+const FILTER_PRESETS = [
+  ["Drop messages containing \"debug\"", '!contains(string(.message) ?? "", "debug")'],
+  ["Keep only err / crit (after parsing syslog)", '.severity == "err" || .severity == "crit"'],
+  ["Drop low severities (after parsing syslog)", '!includes(["debug", "info", "notice"], .severity)'],
+];
+const REMAP_PRESETS = [
+  ["Parse JSON message", ". |= object!(parse_json!(.message))"],
+  ["Parse syslog message", ". |= parse_syslog!(.message)"],
+  ["Parse key=value message", ". |= parse_key_value!(.message)"],
+  ["Drop a field", "del(.field_name)"],
+  ["Rename a field", ".new_name = del(.old_name)"],
+  ["Add static fields", '.environment = "lab"\n.team = "se"'],
+  ["OCSF-style metadata stamp", '.metadata.version = "1.1.0"\n.metadata.product.vendor_name = "Acme"\n.metadata.product.name = "Acme Firewall"\n.dataSource.category = "security"\n.dataSource.vendor = "Acme"\n.dataSource.name = "Acme Firewall"'],
+];
+function newTransform(type){
+  switch(type){
+    case "filter": return {type, condition: '!contains(string(.message) ?? "", "debug")'};
+    case "remap":  return {type, source: '.processed_by = "pipeline-lab"'};
+    case "sample": return {type, n: 10};
+    case "dedupe": return {type, fields: "message"};
+    case "lua":    return {type, path: "", code: STARTER_LUA};
+  }
+}
+function newSource(type){
+  if(type === "record") return {type, text: CATO_SAMPLE};
+  if(type === "generator") return {type, format:"syslog", count:1000, lines:"login failed for admin\nlogin failed for admin\nhealth check ok\nhealth check ok\ndisk usage at 91%"};
+  if(type === "file") return {type, path:"", text:""};
+  return {type:"http", format:"ndjson", body:'{"message":"hello","level":"info"}\n{"message":"hello","level":"info"}\n{"message":"disk full","level":"error"}'};
+}
+function defaultPipeline(){
+  return {
+    name: "",
+    source: newSource("record"),
+    transforms: [ newTransform("lua") ],
+    sink: {type:"devnull", filename:"pipeline-output.ndjson"},
+  };
+}
+let pipe = defaultPipeline();
+let sel = "source";            // "source" | "sink" | integer index of transform
+let last = null;               // last run result
+let tab = "events";
+let stageSel = 0;
+let menuAt = null;             // link index with open "add" menu
+let cfgText = null;
+let ENV = {};                  // /api/status, so hints can match how the app is running
+const pathHint = () => ENV.docker ? " Running in Docker: put the file in the <code>data</code> folder next to docker-compose.yml and use <code>/data/yourfile</code>." : "";
+let serRec = 0;                // which record the before/after view shows
+let serView = "diff";          // "diff" | "output" | "input"
+const serHide = {unchanged: true, empty: true, unmapped: true};   // untouched passthrough is hidden by default
+const KIND_LABEL = {moved:"MOVED", changed:"CHANGED", retyped:"TYPE CHANGED", unmapped:"UNMAPPED", dropped:"NOT CARRIED", added:"ADDED", empty:"EMPTY", unchanged:"SAME"};
+const KIND_ORDER = ["moved","changed","retyped","unmapped","dropped","added","empty","unchanged"];
+const KIND_HELP = {
+  moved:"Same value, different field name", changed:"Same field, different value", retyped:"Same value, different type (for example string to number)",
+  unmapped:"Kept as-is under unmapped", dropped:"Value not found anywhere in the output (dropped or transformed)",
+  added:"New in the output (constants, derived fields)", empty:"Empty in the input", unchanged:"Passed through untouched"};
+
+// ---------- summaries ----------
+function srcSummary(s){
+  if(s.type === "record"){
+    let n = 0; const t = (s.text || "").trim();
+    try { const d = JSON.parse(t); n = Array.isArray(d) ? d.length : 1; } catch(e){ n = t ? t.split("\n").filter((l) => l.trim()).length : 0; }
+    return n + " raw record" + (n === 1 ? "" : "s") + " handed to the next step as-is";
+  }
+  if(s.type === "generator") return "Sample logs: " + fmtN(s.count) + " x " + s.format;
+  if(s.type === "file") return s.path ? s.path : (s.text ? "Pasted text (" + fmtN(s.text.split("\n").length) + " lines)" : "No input yet");
+  return "POST a " + s.format + " body to a local HTTP listener";
+}
+function xfSummary(t){
+  if(t.type === "filter") return t.condition || "(empty)";
+  if(t.type === "remap") return (t.source || "(empty)").split("\n")[0];
+  if(t.type === "sample") return "Keep 1 of every " + (t.n || 1) + " events";
+  if(t.type === "lua") return t.path ? t.path : "processEvent(record), pasted code (" + fmtN((t.code || "").split("\n").length) + " lines)";
+  return "Match on: " + (t.fields || "default fields");
+}
+function sinkSummary(k){
+  const after = hasLua() ? "serializer output: " : "";
+  if(k.type === "devnull") return after + "Dev/null: counts events, stores nothing";
+  if(k.type === "console") return after + "Print events to the screen";
+  return after + "Save to output/" + (k.filename || "pipeline-output.ndjson");
+}
+const srcTitle = (s) => ({generator:"Sample log generator", file:"File", http:"HTTP", record:"Raw record(s)"}[s.type]);
+const hasLua = () => pipe.transforms.some((t) => t.type === "lua");
+const sinkTitle = (k) => ({devnull:"Dev/null", console:"Print to screen", file:"Save to file"}[k.type]);
+
+// ---------- rendering: flow ----------
+function statFor(stageIdx, isSink){
+  if(!last || !last.stages) return "";
+  const st = last.stages;
+  if(isSink){
+    const l = st[st.length-1];
+    return '<div class="stat"><b>' + fmtN(l.events) + '</b> events delivered</div>';
+  }
+  const cur = st[stageIdx];
+  if(!cur) return "";
+  if(stageIdx === 0) return '<div class="stat"><b>' + fmtN(cur.events) + '</b> events out</div>';
+  const prev = st[stageIdx-1];
+  const d = pct(prev.events, cur.events);
+  const pill = prev.events && cur.events !== prev.events
+    ? '<span class="pill drop">&minus;' + d.toFixed(1) + '%</span>' : '<span class="pill same">no change</span>';
+  return '<div class="stat"><b>' + fmtN(prev.events) + '</b> in &rarr; <b>' + fmtN(cur.events) + '</b> out' + pill + '</div>';
+}
+function nodeHTML(kind, id, cls, ttl, sum, stat){
+  const on = sel === id ? " sel" : "";
+  return '<div class="node ' + cls + on + '" data-action="select" data-id="' + id + '">'
+    + '<div class="kind">' + kind + '</div><div class="ttl">' + esc(ttl) + '</div>'
+    + '<div class="sum">' + esc(sum) + '</div>' + stat + '</div>';
+}
+function linkHTML(i){
+  let m = "";
+  const atEnd = i === pipe.transforms.length;
+  if(atEnd && hasLua()) return '<div class="link"></div>';   // nothing can follow the serializer
+  if(menuAt === i){
+    m = '<div class="menu">' + Object.keys(XF).filter((k) => k !== "lua" || (atEnd && !hasLua())).map((k) =>
+      '<button data-action="add" data-at="' + i + '" data-type="' + k + '">' + XF[k].label + '<small>' + XF[k].desc + '</small></button>').join("") + '</div>';
+  }
+  return '<div class="link"><button class="plus" title="Add a step here" data-action="menu" data-at="' + i + '">+</button>' + m + '</div>';
+}
+function renderFlow(){
+  let h = nodeHTML("Source", "source", "", srcTitle(pipe.source), srcSummary(pipe.source), statFor(0, false));
+  pipe.transforms.forEach((t, i) => {
+    h += linkHTML(i);
+    h += nodeHTML(t.type === "lua" ? "Serializer" : "Step " + (i+1), i, "xf", XF[t.type].label, xfSummary(t), statFor(i+1, false));
+  });
+  h += linkHTML(pipe.transforms.length);
+  h += nodeHTML("Destination", "sink", "dst", sinkTitle(pipe.sink), sinkSummary(pipe.sink), statFor(0, true));
+  $("flow").innerHTML = h;
+}
+
+// ---------- rendering: inspector ----------
+function opt(v, label, cur){ return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + '>' + esc(label) + '</option>'; }
+function field(label, inner, hint){ return '<label>' + label + '</label>' + inner + (hint ? '<div class="hint">' + hint + '</div>' : ""); }
+function renderInspector(){
+  const box = $("insp");
+  let h = "";
+  if(sel === "source"){
+    $("inspTitle").textContent = "Source";
+    const s = pipe.source;
+    h += field("Type", '<select data-k="type" data-struct="1">' + opt("record","Raw record(s): paste JSON events",s.type) + opt("generator","Sample log generator",s.type) + opt("file","File (paste or path)",s.type) + opt("http","HTTP listener",s.type) + '</select>');
+    if(s.type === "record"){
+      h += field("Raw record(s) as JSON", '<textarea data-k="text" spellcheck="false" style="min-height:260px">' + esc(s.text) + '</textarea>',
+        "One JSON object, an array, or one object per line. This is exactly what a collector would hand to the serializer. With only a Lua serializer after it, Vector is not used at all.");
+    } else if(s.type === "generator"){
+      h += field("Format", '<select data-k="format" data-struct="1">' + ["syslog","json","apache_common","apache_error","bsd_syslog","shuffle"].map((f) => opt(f,f,s.format)).join("") + '</select>');
+      h += field("Number of events", '<input type="number" data-k="count" min="1" max="5000000" value="' + esc(s.count) + '">', "Vector generates these as fast as it can.");
+      if(s.format === "shuffle") h += field("Lines to shuffle (one per line)", '<textarea data-k="lines" spellcheck="false">' + esc(s.lines) + '</textarea>', "Good for testing dedupe: repeat a line on purpose.");
+    } else if(s.type === "file"){
+      h += field(ENV.docker ? "Path to a log file" : "Path to a log file on this Mac", '<input type="text" data-k="path" placeholder="' + (ENV.docker ? "/data/sample.log" : "~/Downloads/sample.log") + '" value="' + esc(s.path) + '">', "Optional. Leave empty to use the pasted text below. Max 20 MB." + pathHint());
+      h += field("Or paste log lines", '<textarea data-k="text" spellcheck="false" placeholder="One event per line">' + esc(s.text) + '</textarea>', "Each line becomes one event in the <code>message</code> field.");
+    } else {
+      h += field("Body format", '<select data-k="format">' + opt("ndjson","NDJSON (one JSON object per line)",s.format) + opt("json","One JSON object or array",s.format) + opt("text","Plain text lines",s.format) + '</select>');
+      h += field("Body to send", '<textarea data-k="body" spellcheck="false">' + esc(s.body) + '</textarea>', "Lab sends this to a temporary Vector HTTP listener, then stops it.");
+    }
+  } else if(sel === "sink"){
+    $("inspTitle").textContent = "Destination";
+    const k = pipe.sink;
+    h += field("Type", '<select data-k="type" data-struct="1">' + opt("devnull","Dev/null (count only)",k.type) + opt("console","Print to screen",k.type) + opt("file","Save to file",k.type) + '</select>');
+    if(k.type === "file") h += field("File name", '<input type="text" data-k="filename" value="' + esc(k.filename) + '">', "Saved in the <code>output</code> folder next to server.py.");
+    if(hasLua()) h += '<div class="hint" style="margin-top:8px">The destination receives the serializer\'s output.</div>';
+    if(k.type === "devnull") h += '<div class="hint">Nothing is stored, so you can test without sending data anywhere. Stage counts and the before/after view still work.</div>';
+    if(k.type === "console") h += '<div class="hint">The final events appear in the Printed output tab (first 200 shown).</div>';
+  } else {
+    const t = pipe.transforms[sel];
+    $("inspTitle").textContent = "Step " + (sel + 1) + ": " + XF[t.type].label;
+    if(t.type === "filter"){
+      h += field("Preset", '<select data-preset="filter"><option value="">Insert a preset&hellip;</option>' + FILTER_PRESETS.map((p, i) => '<option value="' + i + '">' + esc(p[0]) + '</option>').join("") + '</select>');
+      h += field("Keep events where (VRL)", '<textarea data-k="condition" spellcheck="false">' + esc(t.condition) + '</textarea>', "Must evaluate to true or false. Events that return false are dropped.");
+    } else if(t.type === "remap"){
+      h += field("Preset", '<select data-preset="remap"><option value="">Insert a preset&hellip;</option>' + REMAP_PRESETS.map((p, i) => '<option value="' + i + '">' + esc(p[0]) + '</option>').join("") + '</select>');
+      h += field("VRL program", '<textarea data-k="source" spellcheck="false" style="min-height:150px">' + esc(t.source) + '</textarea>', "Use Validate to check the syntax with real Vector.");
+    } else if(t.type === "sample"){
+      h += field("Keep 1 of every N events", '<input type="number" data-k="n" min="1" value="' + esc(t.n) + '">', "N = 10 keeps about 10% of events.");
+    } else if(t.type === "lua"){
+      h += field(ENV.docker ? "Serializer file (optional)" : "Serializer file on this Mac (optional)", '<input type="text" data-k="path" placeholder="' + (ENV.docker ? "/data/cato_ocsf.lua" : "~/serializers/cato_ocsf.lua") + '" value="' + esc(t.path) + '">', "If set, this file is used instead of the code below, and is re-read on every run." + pathHint());
+      h += field("Or paste the serializer", '<textarea data-k="code" spellcheck="false" style="min-height:340px">' + esc(t.code) + '</textarea>',
+        "Must define a global <code>processEvent(record)</code> that returns a table. Runs on local LuaJIT, so the <code>json</code> and <code>log</code> modules exist but DPM-only modules (hmac, codec) do not.");
+      h += '<div class="insp-actions"><button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
+    } else {
+      h += field("Fields that must match (comma separated)", '<input type="text" data-k="fields" value="' + esc(t.fields) + '">', "Events with identical values in all these fields are treated as repeats. Empty uses Vector's defaults, which include the timestamp.");
+    }
+    const nextIsLua = pipe.transforms[sel + 1] && pipe.transforms[sel + 1].type === "lua";
+    h += '<div class="insp-actions">'
+      + '<button class="btn small" data-action="up"' + (sel === 0 || t.type === "lua" ? " disabled" : "") + '>Move earlier</button>'
+      + '<button class="btn small" data-action="down"' + (sel === pipe.transforms.length - 1 || nextIsLua ? " disabled" : "") + '>Move later</button>'
+      + '<button class="btn small danger" data-action="del">Delete step</button></div>';
+  }
+  box.innerHTML = h;
+}
+
+// ---------- rendering: results ----------
+function renderResults(){
+  const sec = $("results");
+  if(!last || !last.stages){ sec.style.display = "none"; return; }
+  sec.style.display = "";
+  const st = last.stages, a = st[0], z = st[st.length-1];
+  const ev = pct(a.events, z.events), by = pct(a.bytes, z.bytes);
+  const showTiles = !last.serializer || st.length > 2;   // a lone serializer: lead with the before/after view
+  $("tiles").style.display = showTiles ? "" : "none";
+  $("tiles").innerHTML = [
+    [fmtN(a.events), "events in"], [fmtN(z.events), "events out"],
+    [ev.toFixed(1) + "%", "event reduction"], [fmtB(a.bytes), "volume in (as JSON)"],
+    [fmtB(z.bytes), "volume out (as JSON)"], [by.toFixed(1) + "%", "volume reduction"],
+    [last.duration + " s", "Vector run time"],
+  ].map((x) => '<div class="tile"><div class="v">' + esc(x[0]) + '</div><div class="l">' + esc(x[1]) + '</div></div>').join("");
+
+  const tabs = [];
+  if(last.serializer) tabs.push(["serializer","Serializer: before / after"]);
+  tabs.push(["events","Stage events"]);
+  if(last.printed) tabs.push(["printed","Printed output"]);
+  if(last.saved) tabs.push(["saved","Saved file"]);
+  tabs.push(["log","Vector log" + (last.problems && last.problems.length ? " (" + last.problems.length + " issues)" : "")]);
+  if(!tabs.some((t) => t[0] === tab)) tab = "events";
+  $("tabs").innerHTML = tabs.map((t) => '<button class="tab' + (t[0] === tab ? " on" : "") + '" data-action="tab" data-tab="' + t[0] + '">' + esc(t[1]) + '</button>').join("");
+
+  let b = "";
+  if(tab === "serializer"){
+    b = serializerHTML(last.serializer);
+  } else if(tab === "events"){
+    if(stageSel >= st.length) stageSel = 0;
+    b += '<div class="chips">' + st.map((s, i) => '<button class="chip' + (i === stageSel ? " on" : "") + '" data-action="stage" data-i="' + i + '">'
+      + esc(i === 0 ? "Source" : "Step " + i + ": " + s.label) + ' (' + fmtN(s.events) + ')</button>').join("") + '</div>';
+    const cur = st[stageSel];
+    if(!cur.samples.length) b += '<div class="muted">No events reached this stage.</div>';
+    cur.samples.forEach((line) => {
+      let txt = line;
+      try { txt = JSON.stringify(JSON.parse(line), null, 2); } catch(e){}
+      b += '<pre class="ev">' + esc(txt) + '</pre>';
+    });
+    if(cur.events > cur.samples.length) b += '<div class="hint">Showing the first ' + cur.samples.length + ' of ' + fmtN(cur.events) + ' events.</div>';
+  } else if(tab === "printed"){
+    b += '<div class="hint" style="margin-bottom:8px">' + fmtN(last.printed.events) + ' events printed' + (last.printed.events > last.printed.lines.length ? "; first " + last.printed.lines.length + " shown" : "") + '.</div>';
+    b += '<pre class="ev" style="max-height:420px">' + esc(last.printed.lines.join("\n")) + '</pre>';
+  } else if(tab === "saved"){
+    b += '<div class="kv"><span>File</span><code>' + esc(last.saved.path) + '</code></div><div class="kv"><span>Size</span><span>' + fmtB(last.saved.bytes) + '</span></div>';
+  } else {
+    if(last.timed_out) b += '<div class="banner warn" style="margin:0 0 10px">Run hit the time limit and was stopped.</div>';
+    else if(last.stopped_early) b += '<div class="hint" style="margin-bottom:8px">Vector was stopped after the input finished (listeners do not exit on their own).</div>';
+    b += '<pre class="ev" style="max-height:420px">' + esc((last.log || []).join("\n") || "(no log output)") + '</pre>';
+  }
+  $("tabBody").innerHTML = b;
+}
+
+// ---------- rendering: serializer before/after ----------
+function fv(v){
+  let s;
+  try { s = JSON.stringify(v); } catch(e){ s = String(v); }
+  if(s === undefined) s = "undefined";
+  return s.length > 90 ? s.slice(0, 87) + "..." : s;
+}
+const tname = (v) => v === null ? "null" : Array.isArray(v) ? "array" : typeof v;
+function diffRowHTML(r){
+  const tag = '<span class="tag k-' + r.kind + '" title="' + esc(KIND_HELP[r.kind]) + '">' + KIND_LABEL[r.kind] + '</span>';
+  const P = (x) => '<span class="pth">' + esc(x) + '</span>';
+  const V = (x) => '<span class="val">' + esc(fv(x)) + '</span>';
+  let body = "";
+  if(r.kind === "moved" || r.kind === "unmapped"){
+    body = P(r.path) + ' <span class="arr">&rarr;</span> ' + P(r.out[0]) + " " + V(r.to)
+      + (r.retyped ? ' <span class="val">(' + tname(r.from) + " &rarr; " + tname(r.to) + ')</span>' : "")
+      + (r.out.length > 1 ? ' <span class="val">also at: ' + esc(r.out.slice(1).join(", ")) + '</span>' : "");
+  } else if(r.kind === "changed"){
+    body = P(r.path) + " " + V(r.from) + ' <span class="arr">&rarr;</span> ' + V(r.to);
+  } else if(r.kind === "retyped"){
+    body = P(r.path) + " " + V(r.from) + ' <span class="val">(' + tname(r.from) + ')</span> <span class="arr">&rarr;</span> ' + V(r.to) + ' <span class="val">(' + tname(r.to) + ')</span>';
+  } else if(r.kind === "dropped"){
+    body = P(r.path) + " " + V(r.from) + ' <span class="val">not found in the output</span>';
+  } else if(r.kind === "added"){
+    body = P(r.path) + " " + V(r.to);
+  } else if(r.kind === "empty"){
+    body = P(r.path) + ' <span class="val">empty in the input</span>';
+  } else {
+    body = P(r.path) + " " + V(r.to);
+  }
+  return '<div class="drow">' + tag + body + '</div>';
+}
+function serializerHTML(S){
+  let h = "";
+  const bad = S.errors ? ' <b class="fail">' + S.errors + ' record(s) raised an error.</b>' : "";
+  h += '<div class="hint" style="margin-bottom:6px">' + fmtN(S.total) + ' record(s) through the serializer in ' + S.duration + ' s.' + bad
+    + (S.dropped ? " " + S.dropped + " dropped (returned nil)." : "")
+    + (S.truncated ? " Only the first 2,000 events were serialized." : "") + '</div>';
+
+  if(S.lint && S.lint.length){
+    h += '<div class="lint"><b>Console lint</b> (what the DPM console would likely reject):<ul style="margin:4px 0 0 18px;padding:0">'
+      + S.lint.map((f) => '<li><b>' + esc(f.rule) + '</b>' + (f.lines.length ? " (line " + f.lines.join(", ") + ")" : "") + ': ' + esc(f.detail) + '</li>').join("") + '</ul></div>';
+  }
+  if(S.checks && S.checks.length){
+    h += '<div class="chk">' + S.checks.map((c) => '<span class="' + (c.failed ? "fail" : "pass") + '">' + (c.failed ? "FAIL" : "PASS") + '</span><span>' + esc(c.name)
+      + '</span><span class="muted">' + c.passed + ' ok' + (c.failed ? ", " + c.failed + " failed (first: record " + c.first_fail + ")" : "") + '</span>').join("") + '</div>';
+  }
+  const recs = S.records.filter((r) => r.index <= 20);
+  if(serRec >= recs.length) serRec = 0;
+  if(recs.length > 1){
+    h += '<div class="chips">' + recs.map((r, i) => '<button class="chip' + (i === serRec ? " on" : "") + '" data-action="serRec" data-i="' + i + '">#' + r.index + (r.ok ? "" : " (error)") + '</button>').join("") + '</div>';
+  }
+  const rec = recs[serRec];
+  if(!rec){ return h + '<div class="muted">No records.</div>'; }
+  if(!rec.ok){
+    h += '<div class="banner err" style="margin:0 0 8px"><b>processEvent raised an error on record #' + rec.index + '</b><pre>' + esc(rec.error || "") + '</pre></div>';
+  } else if(rec.dropped){
+    h += '<div class="banner warn" style="margin:0 0 8px">The serializer returned nil for record #' + rec.index + ', so it would be dropped.</div>';
+  }
+  if(rec.logs && rec.logs.length) h += '<pre class="ev">' + esc(rec.logs.join("\n")) + '</pre>';
+  if(rec.ok && !rec.dropped){
+    h += '<div class="bar"><span class="seg">'
+      + [["diff","What changed"],["output","OCSF output"],["input","Raw input"]].map((x) => '<button class="' + (serView === x[0] ? "on" : "") + '" data-action="serView" data-v="' + x[0] + '">' + x[1] + '</button>').join("") + '</span></div>';
+    if(serView === "diff"){
+      const sm = rec.diff.summary;
+      h += '<div class="chips">' + KIND_ORDER.filter((k) => sm[k]).map((k) =>
+        '<button class="chip' + (serHide[k] ? "" : " on") + '" title="' + esc(KIND_HELP[k]) + '" data-action="serKind" data-k="' + k + '">' + KIND_LABEL[k] + ' (' + sm[k] + ')</button>').join("") + '</div>';
+      const rows = rec.diff.rows.filter((r) => !serHide[r.kind]);
+      h += rows.length ? rows.map(diffRowHTML).join("") : '<div class="muted">Nothing to show with the current filters.</div>';
+      h += '<div class="hint" style="margin-top:10px">Matching is by value, so it is a guide rather than proof. A value that was transformed (for example an ISO time turned into epoch milliseconds) shows as NOT CARRIED plus ADDED.</div>';
+    } else {
+      const obj = serView === "output" ? rec.output : rec.input;
+      h += '<pre class="ev" style="max-height:480px">' + esc(JSON.stringify(obj, null, 2)) + '</pre>';
+    }
+  } else if(rec.input && serView === "input"){
+    h += '<pre class="ev">' + esc(JSON.stringify(rec.input, null, 2)) + '</pre>';
+  }
+  if(S.stdout && S.stdout.length) h += '<div class="hint" style="margin-top:8px">print() output from the serializer:</div><pre class="ev">' + esc(S.stdout.join("\n")) + '</pre>';
+  return h;
+}
+
+// ---------- rendering: saved list ----------
+async function loadSaved(){
+  let list = [];
+  try { list = await api("/api/pipelines"); } catch(e){ $("saved").innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
+  $("saved").innerHTML = list.length ? list.map((p) =>
+    '<div class="item" data-action="load" data-name="' + esc(p.name) + '"><span class="nm">' + esc(p.name) + '</span>'
+    + '<button class="x" title="Delete" data-action="deleteSaved" data-name="' + esc(p.name) + '">&times;</button></div>').join("")
+    : '<div class="empty">Nothing saved yet. Name this pipeline and press Save.</div>';
+}
+
+function renderAll(){ renderFlow(); renderInspector(); renderResults(); $("pname").value = pipe.name || $("pname").value; }
+
+// ---------- banners ----------
+function banner(kind, html){ $("banner").innerHTML = html ? '<div class="banner ' + kind + '">' + html + '</div>' : ""; }
+function statusBanner(s){
+  let h = "";
+  if(!s.vector) h += '<div><b>Vector is not installed yet.</b> Needed for generator, file and HTTP sources and for Vector steps. In Terminal run:<br><code>' + esc(s.install) + '</code> '
+    + '<button class="btn small" data-action="copyInstall" data-cmd="' + esc(s.install) + '">Copy</button></div>';
+  if(!s.lua) h += '<div style="margin-top:6px"><b>No Lua interpreter found.</b> Needed for the Lua serializer step. In Terminal run:<br><code>' + esc(s.install_lua) + '</code> '
+    + '<button class="btn small" data-action="copyInstall" data-cmd="' + esc(s.install_lua) + '">Copy</button></div>';
+  if(h) banner("warn", h + '<span class="hint">Then restart server.py.</span>');
+}
+
+// ---------- actions ----------
+async function doRun(){
+  const btn = $("runBtn");
+  btn.disabled = true; btn.textContent = "Running…";
+  banner("", "");
+  try {
+    const r = await postJSON("/api/run", pipe);
+    if(!r.ok){
+      last = null;
+      const title = r.stage === "validate" ? "Vector rejected this pipeline" : r.stage === "serializer" ? "The Lua serializer could not run" : "Run failed";
+      const lint = (r.lint || []).map((f) => "Lint: " + f.rule + (f.lines && f.lines.length ? " (line " + f.lines.join(", ") + ")" : "") + " - " + f.detail).join("\n");
+      banner("err", "<b>" + esc(title) + "</b><pre>" + esc(r.error || "") + "\n" + esc(lint) + "\n" + esc((r.log || []).join("\n")) + "</pre>");
+    } else {
+      last = r; stageSel = 0; serRec = 0; serView = "diff";
+      tab = r.serializer ? "serializer" : "events";
+      const n = (r.problems || []).length;
+      if(n) banner("warn", "<b>Run finished with " + n + " warning/error line(s)</b> from Vector, often VRL steps that failed on some events. See the Vector log tab.");
+    }
+  } catch(e){ last = null; banner("err", esc(e.message)); }
+  btn.disabled = false; btn.innerHTML = "&#9654; Run pipeline";
+  renderAll();
+}
+async function doValidate(){
+  banner("", "");
+  try {
+    const r = await postJSON("/api/validate", pipe);
+    banner(r.ok ? "ok" : "err", "<b>" + (r.ok ? "Vector says this pipeline is valid." : "Vector found a problem") + "</b><pre>" + esc(r.output) + "</pre>");
+  } catch(e){ banner("err", esc(e.message)); }
+}
+async function doConfig(){
+  banner("", "");
+  try {
+    const r = await postJSON("/api/config", pipe);
+    if(r.config === null){ banner("ok", esc(r.note || "No Vector config for this pipeline.")); return; }
+    cfgText = JSON.stringify(r.config, null, 2);
+    banner("ok", "<b>Generated Vector config (JSON, usable with <code>vector --config file.json</code>).</b> The hidden tap_* sinks are only for stage counts."
+      + (r.note ? "<br>" + esc(r.note) : "")
+      + ' <button class="btn small" data-action="copyCfg">Copy</button><pre>' + esc(cfgText) + "</pre>");
+  } catch(e){ banner("err", esc(e.message)); }
+}
+async function doSave(){
+  const name = $("pname").value.trim();
+  if(!name){ banner("warn", "Give the pipeline a name first."); return; }
+  pipe.name = name;
+  try { await api("/api/pipelines/" + encodeURIComponent(name), {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(pipe)}); banner("ok", "Saved <b>" + esc(name) + "</b>."); await loadSaved(); }
+  catch(e){ banner("err", esc(e.message)); }
+}
+async function doLoad(name){
+  try {
+    const p = await api("/api/pipelines/" + encodeURIComponent(name));
+    pipe = p; if(!pipe.transforms) pipe.transforms = [];
+    sel = "source"; last = null; tab = "events"; banner("", ""); renderAll(); $("pname").value = name;
+  } catch(e){ banner("err", esc(e.message)); }
+}
+function copy(text){ try { navigator.clipboard.writeText(text); banner("ok", "Copied."); } catch(e){ banner("warn", "Copy failed. Select the text and copy it manually."); } }
+
+document.addEventListener("click", async (ev) => {
+  const el = ev.target.closest("[data-action]");
+  if(!el){ if(menuAt !== null){ menuAt = null; renderFlow(); } return; }
+  const a = el.dataset.action;
+  if(a === "select"){ sel = el.dataset.id === "source" || el.dataset.id === "sink" ? el.dataset.id : Number(el.dataset.id); menuAt = null; renderFlow(); renderInspector(); }
+  else if(a === "menu"){ ev.stopPropagation(); const at = Number(el.dataset.at); menuAt = menuAt === at ? null : at; renderFlow(); }
+  else if(a === "add"){ const at = Number(el.dataset.at); pipe.transforms.splice(at, 0, newTransform(el.dataset.type)); sel = at; menuAt = null; last = null; renderAll(); }
+  else if(a === "starterLua"){ pipe.transforms[sel].code = STARTER_LUA; pipe.transforms[sel].path = ""; last = null; renderAll(); }
+  else if(a === "serRec"){ serRec = Number(el.dataset.i); renderResults(); }
+  else if(a === "serView"){ serView = el.dataset.v; renderResults(); }
+  else if(a === "serKind"){ serHide[el.dataset.k] = !serHide[el.dataset.k]; renderResults(); }
+  else if(a === "del"){ pipe.transforms.splice(sel, 1); sel = "source"; last = null; renderAll(); }
+  else if(a === "up"){ const t = pipe.transforms.splice(sel, 1)[0]; pipe.transforms.splice(sel - 1, 0, t); sel -= 1; last = null; renderAll(); }
+  else if(a === "down"){ const t = pipe.transforms.splice(sel, 1)[0]; pipe.transforms.splice(sel + 1, 0, t); sel += 1; last = null; renderAll(); }
+  else if(a === "run"){ doRun(); }
+  else if(a === "validate"){ doValidate(); }
+  else if(a === "config"){ doConfig(); }
+  else if(a === "save"){ doSave(); }
+  else if(a === "load"){ doLoad(el.dataset.name); }
+  else if(a === "deleteSaved"){
+    ev.stopPropagation();
+    if(confirm("Delete saved pipeline \"" + el.dataset.name + "\"?")){
+      try { await api("/api/pipelines/" + encodeURIComponent(el.dataset.name), {method:"DELETE"}); loadSaved(); } catch(e){ banner("err", esc(e.message)); }
+    }
+  }
+  else if(a === "tab"){ tab = el.dataset.tab; renderResults(); }
+  else if(a === "stage"){ stageSel = Number(el.dataset.i); renderResults(); }
+  else if(a === "copyInstall"){ copy(el.dataset.cmd); }
+  else if(a === "copyCfg"){ copy(cfgText || ""); }
+});
+
+function target(){ return sel === "source" ? pipe.source : sel === "sink" ? pipe.sink : pipe.transforms[sel]; }
+document.addEventListener("input", (ev) => {
+  const el = ev.target;
+  if(el.dataset.k){
+    const t = target();
+    if(el.dataset.k === "type" && el.dataset.struct){ return; }
+    let v = el.value;
+    if(el.type === "number") v = v === "" ? "" : Number(v);
+    t[el.dataset.k] = v;
+    renderFlow();
+  }
+});
+document.addEventListener("change", (ev) => {
+  const el = ev.target;
+  if(el.dataset.preset){
+    if(el.value === "") return;
+    const list = el.dataset.preset === "filter" ? FILTER_PRESETS : REMAP_PRESETS;
+    const text = list[Number(el.value)][1];
+    const t = pipe.transforms[sel];
+    const key = t.type === "filter" ? "condition" : "source";
+    t[key] = t[key] && t[key].trim() && t.type === "remap" ? t[key] + "\n" + text : text;
+    renderAll(); return;
+  }
+  if(el.dataset.k && el.dataset.struct){
+    const t = target();
+    if(el.dataset.k === "type"){
+      if(sel === "source") pipe.source = newSource(el.value);
+      else if(sel === "sink") pipe.sink = {type: el.value, filename: pipe.sink.filename || "pipeline-output.ndjson"};
+    } else { t[el.dataset.k] = el.value; }
+    last = null;
+    renderAll();
+  }
+});
+$("pname").addEventListener("input", () => { pipe.name = $("pname").value; });
+
+// ---------- boot ----------
+(async function boot(){
+  renderAll();
+  try {
+    const s = await api("/api/status");
+    ENV = s; renderInspector();
+    $("vecInfo").textContent = (s.docker ? "Docker  |  " : "") + (s.vector ? s.version.split(" (")[0] : "Vector not found") + "  |  " + (s.lua ? "Lua ready" : "Lua not found");
+    statusBanner(s);
+  } catch(e){ $("vecInfo").textContent = "server offline"; banner("err", esc(e.message)); }
+  loadSaved();
+})();
+</script>
+</body>
+</html>
