@@ -133,6 +133,80 @@ def safe_filename(name, default="pipeline-output.ndjson"):
     return name[:80] or default
 
 
+def make_transforms(tlist, prev, prefix, offset):
+    """Build Vector transform nodes for a list of steps. Returns (transforms, stages, last_id)."""
+    transforms, stages = {}, []
+    for n, t in enumerate(tlist, 1):
+        i = n + offset
+        tid = "%s%d" % (prefix, n)
+        ty = t.get("type")
+        if ty == "filter":
+            cond = str(t.get("condition", "")).strip()
+            if not cond:
+                raise ApiError("Step %d (filter): the condition is empty." % i)
+            transforms[tid] = {"type": "filter", "inputs": [prev], "condition": cond}
+        elif ty == "remap":
+            code = str(t.get("source", "")).strip()
+            if not code:
+                raise ApiError("Step %d (remap): the VRL is empty." % i)
+            transforms[tid] = {"type": "remap", "inputs": [prev], "source": code}
+        elif ty == "sample":
+            k = to_int(t.get("n"), "Step %d sample N" % i, 1, 1_000_000, 10)
+            transforms[tid] = {"type": "sample", "inputs": [prev], "ratio": 1.0 / k}
+        elif ty == "dedupe":
+            fields = [f.strip() for f in str(t.get("fields", "")).split(",") if f.strip()]
+            node = {"type": "dedupe", "inputs": [prev]}
+            if fields:
+                node["fields"] = {"match": fields}
+            transforms[tid] = node
+        else:
+            raise ApiError("Step %d: unknown transform type %r." % (i, ty))
+        stages.append({"id": tid, "label": "%s" % ty, "kind": "transform"})
+        prev = tid
+    return transforms, stages, prev
+
+
+def build_post_config(post, run_dir, offset):
+    """Vector config for the steps AFTER the serializer: OCSF records in on stdin, taps out."""
+    transforms, stages, prev = make_transforms(post, "source", "p", offset)
+    sinks = {"destination": {"type": "blackhole", "inputs": [prev]}}
+    for st in stages:
+        sinks["tap_" + st["id"]] = {"type": "file", "inputs": [st["id"]],
+                                    "path": str(Path(run_dir) / ("tap_%s.ndjson" % st["id"])),
+                                    "encoding": {"codec": "json"}}
+    cfg = {"data_dir": str(Path(run_dir) / "data_post"),
+           "sources": {"source": {"type": "stdin", "decoding": {"codec": "json"},
+                                  "framing": {"method": "newline_delimited"}}},
+           "transforms": transforms, "sinks": sinks}
+    return escape_dollars(cfg), stages
+
+
+def run_post(vec, post, events, run_dir, offset):
+    """Run the post-serializer steps in a second Vector pass over the OCSF records."""
+    cfg, stages = build_post_config(post, run_dir, offset)
+    (run_dir / "data_post").mkdir(exist_ok=True)
+    cfg_path = run_dir / "vector_post.json"
+    cfg_path.write_text(json.dumps(cfg, indent=2))
+    v = subprocess.run([vec, "validate", str(cfg_path)], capture_output=True, text=True, timeout=60, env=clean_env())
+    if v.returncode != 0:
+        return {"ok": False, "error": ANSI.sub("", (v.stdout or "") + (v.stderr or "")).strip() or "Vector rejected the post-serializer steps."}
+    data = ("\n".join(json.dumps(e) for e in events) + "\n").encode("utf-8") if events else b""
+    try:
+        r = subprocess.run([vec, "--config", str(cfg_path)], input=data, capture_output=True,
+                           timeout=MAX_RUN_SECONDS, env=clean_env())
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "The steps after the serializer hit the time limit."}
+    results, outputs = [], []
+    for idx, st in enumerate(stages):
+        last = idx == len(stages) - 1
+        ev, nb, samples, kept = read_tap(run_dir / ("tap_%s.ndjson" % st["id"]), SER_EVENT_LIMIT if last else 0)
+        if last:
+            outputs = kept
+        results.append(dict(st, events=ev, bytes=nb, samples=samples))
+    log = [l for l in ANSI.sub("", (r.stderr or b"").decode("utf-8", "replace")).splitlines() if l.strip()][-40:]
+    return {"ok": True, "stages": results, "outputs": outputs, "log": log}
+
+
 def build_config(p, run_dir, http_port=8686):
     """Return (config dict or None, stages, meta). Does not read input files.
 
@@ -143,15 +217,17 @@ def build_config(p, run_dir, http_port=8686):
         raise ApiError("Pipeline must be a JSON object.")
     src = p.get("source") or {}
     stype = src.get("type")
-    meta = {"mode": None, "http_format": None, "saved_path": None, "sink": None, "lua": None}
+    meta = {"mode": None, "http_format": None, "saved_path": None, "sink": None, "lua": None, "post": []}
 
     tlist = list(p.get("transforms") or [])
     lua_steps = [i for i, t in enumerate(tlist) if t.get("type") == "lua"]
     if lua_steps:
-        if len(lua_steps) > 1 or lua_steps[0] != len(tlist) - 1:
-            raise ApiError("The Lua serializer must be the last step, and there can be only one.")
-        meta["lua"] = tlist[-1]
-        tlist = tlist[:-1]
+        if len(lua_steps) > 1:
+            raise ApiError("There can be only one Lua serializer.")
+        li = lua_steps[0]
+        meta["lua"] = tlist[li]
+        meta["post"] = tlist[li + 1:]   # steps after the serializer run in a second Vector pass
+        tlist = tlist[:li]
 
     s = None
     if stype == "generator":
@@ -198,35 +274,9 @@ def build_config(p, run_dir, http_port=8686):
     else:
         raise ApiError("Choose a source type (generator, file, raw record or http).")
 
-    transforms = {}
     stages = [{"id": "source", "label": label, "kind": "source"}]
-    prev = "source"
-    for i, t in enumerate(tlist, 1):
-        tid = "t%d" % i
-        ty = t.get("type")
-        if ty == "filter":
-            cond = str(t.get("condition", "")).strip()
-            if not cond:
-                raise ApiError("Step %d (filter): the condition is empty." % i)
-            transforms[tid] = {"type": "filter", "inputs": [prev], "condition": cond}
-        elif ty == "remap":
-            code = str(t.get("source", "")).strip()
-            if not code:
-                raise ApiError("Step %d (remap): the VRL is empty." % i)
-            transforms[tid] = {"type": "remap", "inputs": [prev], "source": code}
-        elif ty == "sample":
-            n = to_int(t.get("n"), "Step %d sample N" % i, 1, 1_000_000, 10)
-            transforms[tid] = {"type": "sample", "inputs": [prev], "ratio": 1.0 / n}
-        elif ty == "dedupe":
-            fields = [f.strip() for f in str(t.get("fields", "")).split(",") if f.strip()]
-            node = {"type": "dedupe", "inputs": [prev]}
-            if fields:
-                node["fields"] = {"match": fields}
-            transforms[tid] = node
-        else:
-            raise ApiError("Step %d: unknown transform type %r." % (i, ty))
-        stages.append({"id": tid, "label": "%s" % ty, "kind": "transform"})
-        prev = tid
+    transforms, tstages, prev = make_transforms(tlist, "source", "t", 0)
+    stages += tstages
 
     sink = p.get("sink") or {}
     sink_type = sink.get("type", "devnull")
@@ -995,6 +1045,18 @@ def validate_pipeline(p):
             parts.append(ANSI.sub("", (r.stdout or "") + (r.stderr or "")).strip())
         else:
             parts.append("No Vector steps: the raw record goes straight to the serializer.")
+        if meta["post"]:
+            vec = find_vector()
+            if not vec:
+                raise ApiError("Vector is not installed yet.", 409)
+            pcfg, _ps = build_post_config(meta["post"], run_dir, len(p.get("transforms") or []) - len(meta["post"]))
+            (run_dir / "data_post").mkdir(exist_ok=True)
+            pp = run_dir / "vector_post.json"
+            pp.write_text(json.dumps(pcfg, indent=2))
+            r2 = subprocess.run([vec, "validate", str(pp)], capture_output=True, text=True, timeout=60, env=clean_env())
+            if r2.returncode != 0:
+                ok = False
+            parts.append("Steps after the serializer: " + ANSI.sub("", (r2.stdout or "") + (r2.stderr or "")).strip())
         if meta["lua"]:
             code = load_serializer_code(meta["lua"])
             lua = find_lua()
@@ -1337,6 +1399,17 @@ def run_pipeline(p):
             res["stages"].append({"id": "serializer", "label": "lua serializer", "kind": "transform",
                                   "events": len(lines), "bytes": sum(len(l) + 1 for l in lines),
                                   "samples": lines[:SAMPLE_LIMIT]})
+            if meta["post"]:
+                vec2 = find_vector()
+                if not vec2:
+                    raise ApiError("Vector is not installed yet (needed for steps after the serializer).", 409)
+                pr = run_post(vec2, meta["post"], outputs, run_dir, len(res["stages"]) - 1)
+                if not pr.get("ok"):
+                    return {"ok": False, "stage": "after-serializer", "error": pr.get("error"), "log": res.get("log", [])}
+                res["stages"].extend(pr["stages"])
+                res["log"] = (res.get("log") or []) + pr.get("log", [])
+                outputs = pr["outputs"]
+                lines = [json.dumps(o) for o in outputs]
             if meta["sink"] == "console":
                 res["printed"] = {"events": len(lines), "lines": lines[:PRINT_LIMIT]}
             elif meta["sink"] == "file":
@@ -1453,7 +1526,7 @@ class Handler(BaseHTTPRequestHandler):
                 if cfg is None:
                     note = "No Vector config: with a raw record source and no Vector steps, the record goes straight to the Lua serializer."
                 elif meta["lua"]:
-                    note = "The Lua serializer is not part of this config. It runs after Vector, in lua_runner.lua, and the destination applies to its output."
+                    note = "The Lua serializer is not part of this config. It runs after Vector, in lua_runner.lua, and the destination applies to its output." + (" Steps after the serializer run in a second Vector pass over the OCSF records." if meta["post"] else "")
                 return self._json(200, {"config": cfg, "note": note})
             if method == "POST" and path == "/api/generate":
                 b = self._read_json()

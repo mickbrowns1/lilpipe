@@ -438,9 +438,8 @@ function nodeHTML(kind, id, cls, ttl, sum, stat){
 function linkHTML(i){
   let m = "";
   const atEnd = i === pipe.transforms.length;
-  if(atEnd && hasLua()) return '<div class="link"></div>';   // nothing can follow the serializer
   if(menuAt === i){
-    m = '<div class="menu">' + Object.keys(XF).filter((k) => k !== "lua" || (atEnd && !hasLua())).map((k) =>
+    m = '<div class="menu">' + Object.keys(XF).filter((k) => k !== "lua" || !hasLua()).map((k) =>
       '<button data-action="add" data-at="' + i + '" data-type="' + k + '">' + XF[k].label + '<small>' + XF[k].desc + '</small></button>').join("") + '</div>';
   }
   return '<div class="link"><button class="plus" title="Add a step here" data-action="menu" data-at="' + i + '">+</button>' + m + '</div>';
@@ -509,10 +508,9 @@ function renderInspector(){
     } else {
       h += field("Fields that must match (comma separated)", '<input type="text" data-k="fields" value="' + esc(t.fields) + '">', "Events with identical values in all these fields are treated as repeats. Empty uses Vector's defaults, which include the timestamp.");
     }
-    const nextIsLua = pipe.transforms[sel + 1] && pipe.transforms[sel + 1].type === "lua";
     h += '<div class="insp-actions">'
-      + '<button class="btn small" data-action="up"' + (sel === 0 || t.type === "lua" ? " disabled" : "") + '>Move earlier</button>'
-      + '<button class="btn small" data-action="down"' + (sel === pipe.transforms.length - 1 || nextIsLua ? " disabled" : "") + '>Move later</button>'
+      + '<button class="btn small" data-action="up"' + (sel === 0 ? " disabled" : "") + '>Move earlier</button>'
+      + '<button class="btn small" data-action="down"' + (sel === pipe.transforms.length - 1 ? " disabled" : "") + '>Move later</button>'
       + '<button class="btn small danger" data-action="del">Delete step</button></div>';
   }
   box.innerHTML = h;
