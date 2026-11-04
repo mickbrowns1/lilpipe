@@ -524,14 +524,23 @@ function renderResults(){
   sec.style.display = "";
   const st = last.stages, a = st[0], z = st[st.length-1];
   const ev = pct(a.events, z.events), by = pct(a.bytes, z.bytes);
-  const showTiles = !last.serializer || st.length > 2;   // a lone serializer: lead with the before/after view
-  $("tiles").style.display = showTiles ? "" : "none";
-  $("tiles").innerHTML = [
-    [fmtN(a.events), "events in"], [fmtN(z.events), "events out"],
-    [ev.toFixed(1) + "%", "event reduction"], [fmtB(a.bytes), "volume in (as JSON)"],
-    [fmtB(z.bytes), "volume out (as JSON)"], [by.toFixed(1) + "%", "volume reduction"],
-    [last.duration + " s", "Vector run time"],
-  ].map((x) => '<div class="tile"><div class="v">' + esc(x[0]) + '</div><div class="l">' + esc(x[1]) + '</div></div>').join("");
+  $("tiles").style.display = "";
+  const chg = (p, word) => p < 0 ? ["+" + Math.abs(p).toFixed(1) + "%", word + " increase"] : [p.toFixed(1) + "%", word + " reduction"];
+  const leafCount = (o) => (o !== null && typeof o === "object") ? Object.keys(o).reduce((n, k) => n + leafCount(o[k]), 0) : 1;
+  const tiles = [
+    [fmtN(a.events), "events in"], [fmtN(z.events), "events out"], chg(ev, "event"),
+    [fmtB(a.bytes), "volume in (as JSON)"], [fmtB(z.bytes), "volume out (as JSON)"], chg(by, "volume"),
+  ];
+  if(last.serializer){
+    const rs = (last.serializer.records || []).filter((r) => r.input && r.output);
+    if(rs.length){
+      const fin = rs.reduce((n, r) => n + leafCount(r.input), 0) / rs.length;
+      const fout = rs.reduce((n, r) => n + leafCount(r.output), 0) / rs.length;
+      tiles.push([fin.toFixed(0), "fields per event in"], [fout.toFixed(0), "fields per event out"]);
+    }
+  }
+  tiles.push([(Number(last.duration || 0) + Number((last.serializer && last.serializer.duration) || 0)).toFixed(2) + " s", last.serializer ? "run time (incl. serializer)" : "Vector run time"]);
+  $("tiles").innerHTML = tiles.map((x) => '<div class="tile"><div class="v">' + esc(x[0]) + '</div><div class="l">' + esc(x[1]) + '</div></div>').join("");
 
   const tabs = [];
   if(last.serializer) tabs.push(["serializer","Serializer: before / after"]);
