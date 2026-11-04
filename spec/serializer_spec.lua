@@ -105,6 +105,10 @@ for _, target in ipairs(targets) do
             assert.are.equal(2, seen["10.1.2.3"])
         end)
 
+        it("does not keep the original message or raw_data", function()
+            assert.is_nil(out.raw_data)
+        end)
+
         it("keeps only true leftovers under unmapped", function()
             assert.are.equal("false", out.unmapped.src_is_site_or_vpn)
             assert.are.equal("false", out.unmapped.dest_is_site_or_vpn)

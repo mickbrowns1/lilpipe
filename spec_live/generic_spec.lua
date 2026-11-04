@@ -68,6 +68,10 @@ for i, rec in ipairs(records) do
             assert.are.equal(out.metadata.product.name, ds.name)
         end)
 
+        it("does not keep the original message (no raw_data)", function()
+            assert.is_nil(out.raw_data, "raw_data should not be set: drop the original message after parsing")
+        end)
+
         it("does not copy values already mapped into OCSF fields into unmapped", function()
             if type(out.unmapped) ~= "table" then return end
             local mapped = {}

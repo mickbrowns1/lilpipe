@@ -1055,7 +1055,7 @@ def generate_serializer(text, vendor="", product="", version=""):
     uid = re.sub(r"[^a-z0-9]+", "_", product.lower()).strip("_") or "vendor"
     if fmt:
         parse_use = ('    local envelope_ts = nil\n    if type(event.message) == "string" then\n        local parsed = parseLine(event.message)\n'
-                     '        if parsed then\n            e = parsed\n            r.raw_data = event.message\n            envelope_ts = event.timestamp\n        end\n    end')
+                     '        if parsed then\n            e = parsed\n            envelope_ts = event.timestamp\n        end\n    end')
         parse_time = ('    -- last resort only: the envelope timestamp is ingest time, not event time\n'
                       '    if not r.time and envelope_ts then\n        local ms2 = toEpochMs(envelope_ts)\n        if ms2 then r.time = ms2 end\n    end')
         parse_funcs = build_parse_funcs(fmt)
