@@ -6,7 +6,7 @@
 <title>Trickle</title>
 <style>
 :root{
-  --bg:#f5f6f8; --panel:#ffffff; --panel2:#f0f2f5; --text:#1b1f27; --muted:#667085; --line:#dde1e7;
+  --bg:#f5f6f8; --panel:#ffffff; --panel2:#f0f2f5; --text:#1b1f27; --muted:#667085; --line:#dde1e7; --water:#0a8fd6;
   --accent:#0f766e; --accent-ink:#ffffff; --src:#2563eb; --xf:#7c3aed; --dst:#15803d;
   --warn:#b45309; --warn-bg:#fef3c7; --err:#b42318; --err-bg:#fee4e2; --ok-bg:#dcfce7;
   --code:#f6f8fa; --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
@@ -14,7 +14,7 @@
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --bg:#0f1318; --panel:#171c23; --panel2:#1e242d; --text:#e6e9ee; --muted:#9aa4b2; --line:#2b323d;
+    --bg:#0f1318; --panel:#171c23; --panel2:#1e242d; --text:#e6e9ee; --muted:#9aa4b2; --line:#2b323d; --water:#4cc3ff;
     --accent:#2dd4bf; --accent-ink:#06201d; --src:#60a5fa; --xf:#a78bfa; --dst:#4ade80;
     --warn:#fbbf24; --warn-bg:#3a2e0c; --err:#fda29b; --err-bg:#3b1512; --ok-bg:#12301c;
     --code:#10151b; --shadow:none; color-scheme: dark;
@@ -25,9 +25,9 @@ html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 button,input,select,textarea{font:inherit;color:inherit}
 header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
-header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px;line-height:1.1}
+header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px;line-height:1.1;color:var(--water)}
 .brand{display:flex;flex-direction:column;gap:1px}
-.brand .tag{font-size:10.5px;color:var(--muted,#6b7280);line-height:1.1;letter-spacing:.2px}
+.brand .tag{font-size:10.5px;color:var(--water);opacity:.8;line-height:1.1;letter-spacing:.2px}
 header .sub{color:var(--muted);font-size:12px}
 header .sp{flex:1}
 .btn{border:1px solid var(--line);background:var(--panel);padding:6px 12px;border-radius:7px;cursor:pointer}
@@ -140,7 +140,7 @@ pre.ev{margin:0 0 8px;background:var(--code);border:1px solid var(--line);border
 </head>
 <body>
 <header>
-  <div class="brand"><h1>Trickle</h1><div class="tag">it's only half a pipeline</div></div>
+  <div class="brand"><h1>Trickle</h1><div class="tag">&hellip; it's only half a pipeline</div></div>
   <span class="sub" id="vecInfo">checking Vector&hellip;</span>
   <span class="sp"></span>
   <button class="btn" data-action="config">View config</button>
