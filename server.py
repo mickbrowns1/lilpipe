@@ -472,7 +472,7 @@ LOG_ALIASES = {
     "src": ("src_endpoint.ip", "s"), "spt": ("src_endpoint.port", "n"), "shost": ("src_endpoint.hostname", "s"),
     "smac": ("src_endpoint.mac", "s"), "dst": ("dst_endpoint.ip", "s"), "dpt": ("dst_endpoint.port", "n"),
     "dhost": ("dst_endpoint.hostname", "s"), "dmac": ("dst_endpoint.mac", "s"),
-    "proto": ("connection_info.protocol_name", "s"), "suser": ("actor.user.name", "s"),
+    "proto": ("connection_info.protocol_name", "s"), "suser": ("actor.user.name", "s"), "duser": ("actor.user.name", "s"),
     "usrname": ("actor.user.name", "s"), "fname": ("file.name", "s"), "filepath": ("file.path", "s"),
     "filehash": ("file.hashes[0].value", "s"), "request": ("http_request.url.url_string", "s"),
     "requestmethod": ("http_request.http_method", "s"), "requestclientapplication": ("http_request.user_agent", "s"),
@@ -480,6 +480,7 @@ LOG_ALIASES = {
     "externalid": ("metadata.uid", "s"), "dvchost": ("device.hostname", "s"), "devicehostname": ("device.hostname", "s"),
     "dvc": ("device.ip", "s"), "cnt": ("count", "n"), "in": ("traffic.bytes_in", "n"), "out": ("traffic.bytes_out", "n"),
     "sysloghost": ("device.hostname", "s"),
+    "start": ("start_time", "t"), "end": ("end_time", "t"),
 }
 LOG_CONSUMED = {"cef_version", "leef_version", "device_vendor", "device_product", "syslog_app"}
 FORMAT_NAMES = {"cef": "CEF", "leef": "LEEF", "kv": "key=value", "json": "JSON in a message"}
@@ -528,11 +529,21 @@ def parse_leef_py(payload):
     return rec
 
 
+CEF_BARE = re.compile(r"^\s*\d\|(?:[^|]*\|){5}")   # CEF header without the CEF: prefix, e.g. 0|Vendor|Product|1.0|id|name|3|...
+
+
+def looks_like_cef(payload):
+    return "CEF:" in payload or bool(CEF_BARE.match(payload))
+
+
 def parse_cef_py(payload):
     i = payload.find("CEF:")
-    if i < 0:
+    if i >= 0:
+        rest = payload[i + 4:]
+    elif CEF_BARE.match(payload):
+        rest = payload.lstrip()
+    else:
         return None
-    rest = payload[i + 4:]
     rec, pos = {}, 0
     for name in CEF_HEADER:
         j = pos
@@ -554,11 +565,12 @@ def parse_cef_py(payload):
     for n, m in enumerate(keys):
         end = keys[n + 1].start() - 1 if n + 1 < len(keys) else len(ext)
         rec[m.group(1)] = ext[m.end():end].strip().replace("\\=", "=").replace("\\n", "\n").replace("\\\\", "\\")
-    for n in range(1, 7):                      # csN / csNLabel pairs become named fields
-        lab, val = rec.pop("cs%dLabel" % n, None), rec.get("cs%d" % n)
-        if lab and val is not None:
-            rec.pop("cs%d" % n, None)
-            rec[lab] = val
+    for key in [k for k in rec if k.endswith("Label") and len(k) > 5]:   # csN, cnN, cfpN ... plus their Label
+        base = key[:-5]
+        if base in rec:
+            lab, val = rec.pop(key), rec.pop(base)
+            if lab:
+                rec[lab] = val
     return rec
 
 
@@ -576,7 +588,7 @@ def detect_log(line):
     """Return (format, fields) for a text log line, or (None, None)."""
     payload, sys_fields = strip_syslog(line.strip())
     rec, fmt = None, None
-    if "CEF:" in payload:
+    if looks_like_cef(payload):
         rec, fmt = parse_cef_py(payload), "cef"
     elif "LEEF:" in payload:
         rec, fmt = parse_leef_py(payload), "leef"
@@ -606,8 +618,14 @@ end
 
 local function parseCef(payload)
     local at = string.find(payload, "CEF:", 1, true)
-    if not at then return nil end
-    local rest = string.sub(payload, at + 4)
+    local rest
+    if at then
+        rest = string.sub(payload, at + 4)
+    elseif string.match(payload, "^%s*%d|") then
+        rest = string.gsub(payload, "^%s+", "")
+    else
+        return nil
+    end
     local names = { "cef_version", "device_vendor", "device_product", "device_version", "signature_id", "name", "severity" }
     local rec = {}
     local pos = 1
@@ -649,14 +667,18 @@ local function parseCef(payload)
         val = string.gsub(val, "%s+$", "")
         rec[keys[n].key] = cefUnescape(val)
     end
-    for n = 1, 6 do
-        local lab = rec["cs" .. n .. "Label"]
-        local val = rec["cs" .. n]
-        rec["cs" .. n .. "Label"] = nil
-        if lab and val ~= nil then
-            rec["cs" .. n] = nil
-            rec[lab] = val
+    local renames = {}
+    for key, lab in pairs(rec) do
+        if string.len(key) > 5 and string.sub(key, -5) == "Label" then
+            local base = string.sub(key, 1, -6)
+            if rec[base] ~= nil then table.insert(renames, { key = key, base = base, lab = lab }) end
         end
+    end
+    for _, rn in ipairs(renames) do
+        local val = rec[rn.base]
+        rec[rn.key] = nil
+        rec[rn.base] = nil
+        if rn.lab ~= "" then rec[rn.lab] = val end
     end
     return rec
 end
@@ -755,7 +777,7 @@ def build_parse_funcs(fmt):
     disp = ["", "-- Detect the payload format and return a flat table of fields (or nil).", "local function parseLine(line)",
             "    local payload, rec = stripSyslog(line)"]
     if fmt == "cef":
-        disp += ['    local parsed = nil', '    if string.find(payload, "CEF:", 1, true) then parsed = parseCef(payload) end']
+        disp += ['    local parsed = parseCef(payload)']
     elif fmt == "leef":
         disp += ['    local parsed = nil', '    if string.find(payload, "LEEF:", 1, true) then parsed = parseLeef(payload) end']
     elif fmt == "kv":
@@ -1071,7 +1093,7 @@ def generate_serializer(text, vendor="", product="", version=""):
 
     if not time_keys and "starttime" in by_norm:
         time_keys = [by_norm["starttime"]]   # used for time, and also mapped to start_time
-    time_consumed = {k for k in time_keys if _norm(k) not in ("starttime", "endtime")}
+    time_consumed = {k for k in time_keys if _norm(k) not in ("starttime", "endtime", "start", "end")}
     consumed = time_consumed | {k for k in (sev_key, act_key) if k} | set(mitre_keys)
     if fmt:
         consumed |= {k for k in keys if k in LOG_CONSUMED}
