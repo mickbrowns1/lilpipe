@@ -133,6 +133,29 @@ def safe_filename(name, default="pipeline-output.ndjson"):
     return name[:80] or default
 
 
+def file_json_records(src):
+    """If a file source holds ONE pretty-printed JSON document (object or array of objects), return its
+    records. Plain log lines and one-event-per-line files return None and keep line-by-line behaviour."""
+    try:
+        if str(src.get("path", "")).strip():
+            fp = Path(str(src["path"]).strip()).expanduser()
+            if not fp.is_file() or fp.stat().st_size > MAX_INPUT_BYTES:
+                return None
+            text = fp.read_text(encoding="utf-8", errors="replace")
+        else:
+            text = str(src.get("text", ""))
+        text = text.strip()
+        if "\n" not in text or text[:1] not in "{[":
+            return None
+        data = json.loads(text)
+    except (ValueError, OSError):
+        return None
+    recs = data if isinstance(data, list) else [data]
+    if recs and all(isinstance(r, dict) for r in recs) and len(recs) <= MAX_RECORDS:
+        return recs
+    return None
+
+
 def make_transforms(tlist, prev, prefix, offset):
     """Build Vector transform nodes for a list of steps. Returns (transforms, stages, last_id)."""
     transforms, stages = {}, []
@@ -245,9 +268,16 @@ def build_config(p, run_dir, http_port=8686):
         meta["mode"] = "generator"
         meta["count"] = count
     elif stype == "file":
-        s = {"type": "stdin"}
-        label = "File"
-        meta["mode"] = "stdin"
+        jr = file_json_records(src)
+        if jr is not None:    # a pretty-printed JSON document: its events, not one event per line
+            s = {"type": "stdin", "decoding": {"codec": "json"}, "framing": {"method": "newline_delimited"}}
+            label = "File (JSON)"
+            meta["mode"] = "stdin_json"
+            meta["json_records"] = jr
+        else:
+            s = {"type": "stdin"}
+            label = "File"
+            meta["mode"] = "stdin"
     elif stype == "record":
         label = "Raw records"
         if tlist:
@@ -420,6 +450,13 @@ _alias("internalid eventid id uid guid", "metadata.uid")
 _alias("eventcount count", "count", "n")
 _alias("message msg description", "message")
 _alias("sysloghost", "device.hostname")
+_alias("alertid", "finding_info.uid")
+_alias("alertname", "finding_info.title")
+_alias("alerttype", "finding_info.types[0]")
+_alias("alertinfosubject", "message")
+_alias("alertinfodescription", "finding_info.desc")
+_alias("starttime", "start_time", "t")
+_alias("endtime", "end_time", "t")
 
 GEN_TIME_KEYS = ["time", "timestamp", "eventtimestamp", "eventtime", "ts", "datetime", "createdat", "date", "rt", "end", "start", "devtime", "syslogtime"]
 GEN_SEV_KEYS = ["risklevel", "severity", "sev", "risk", "level", "priority"]
@@ -774,6 +811,18 @@ local function severityId(sev)
     return SEVERITY[string.lower(tostring(sev or ""))] or 0
 end
 
+-- Read a value by plain key or by dotted path such as alertInfo.subject.
+local function getPath(obj, path)
+    local direct = obj[path]
+    if direct ~= nil then return direct end
+    local cur = obj
+    for part in string.gmatch(path, "[^.]+") do
+        if type(cur) ~= "table" then return nil end
+        cur = cur[part]
+    end
+    return cur
+end
+
 local function isEmpty(v)
     if v == nil or v == "" then return true end
     if type(v) == "table" and next(v) == nil then return true end
@@ -878,7 +927,7 @@ function processEvent(event)
     local r = {}
 __CEF_USE__
     local action = nil
-    if ACTION_FIELD then action = e[ACTION_FIELD] end
+    if ACTION_FIELD then action = getPath(e, ACTION_FIELD) end
     local act = activityId(action)
 
     r.class_uid = CLASS_UID
@@ -890,7 +939,7 @@ __CEF_USE__
     r.status_id = 1
 
     local sev = nil
-    if SEVERITY_FIELD then sev = e[SEVERITY_FIELD] end
+    if SEVERITY_FIELD then sev = getPath(e, SEVERITY_FIELD) end
     r.severity_id = severityId(sev)
     if not isEmpty(sev) then r.severity = tostring(sev) end
 
@@ -900,7 +949,7 @@ __CEF_USE__
     end
 
     for _, f in ipairs(TIME_FIELDS) do
-        local ms = toEpochMs(e[f])
+        local ms = toEpochMs(getPath(e, f))
         if ms then r.time = ms; break end
     end
 
@@ -918,9 +967,10 @@ __CEF_TIME__
     local mapped = {}
     for _, m in ipairs(MAP) do
         mapped[m.source] = true
-        local v = e[m.source]
+        local v = getPath(e, m.source)
         if not isEmpty(v) then
             if m.number then v = tonumber(v) or v end
+            if m.time then v = toEpochMs(v) or v end
             setNestedField(r, m.target, v)
         end
     end
@@ -939,11 +989,20 @@ __EXTRA__
     if r.file and r.file.hashes and r.file.hashes[1] then addObs("file.hashes", 8, r.file.hashes[1].value) end
     if #obs > 0 then r.observables = obs end
 
-    for k, v in pairs(e) do
-        if not mapped[k] and not CONSUMED[k] and not isEmpty(v) then
-            setNestedField(r, "unmapped." .. k, v)
+    -- everything not mapped or consumed goes under unmapped, walking nested objects
+    local function copyUnmapped(src, prefix)
+        for k, v in pairs(src) do
+            local path = prefix .. tostring(k)
+            if not mapped[path] and not CONSUMED[path] and not isEmpty(v) then
+                if type(v) == "table" and #v == 0 then
+                    copyUnmapped(v, path .. ".")
+                else
+                    setNestedField(r, "unmapped." .. path, v)
+                end
+            end
         end
     end
+    copyUnmapped(e, "")
     return r
 end
 """
@@ -954,8 +1013,8 @@ GEN_MITRE_EXTRA = r"""
         if type(v) == "table" then return v end
         return { v }
     end
-    local tactics = listOf(e[__TAC__])
-    local techs = listOf(e[__TEC__])
+    local tactics = listOf(getPath(e, __TAC__))
+    local techs = listOf(getPath(e, __TEC__))
     local n = math.max(#tactics, #techs)
     for i = 1, n do
         local base = "finding_info.attacks[" .. (i - 1) .. "]"
@@ -980,9 +1039,17 @@ def generate_serializer(text, vendor="", product="", version=""):
     if fmt and not vendor.strip():
         vendor = (recs[0].get("device_vendor") or "").strip()
         product = (recs[0].get("device_product") or "").strip()
+    def flat_paths(d, prefix=""):
+        for k, v in d.items():
+            path = prefix + str(k)
+            if isinstance(v, dict) and v:
+                yield from flat_paths(v, path + ".")
+            else:
+                yield path
+
     keys = []
     for r in recs:
-        for k in r:
+        for k in flat_paths(r):
             if k not in keys:
                 keys.append(k)
     by_norm = {}
@@ -1002,19 +1069,25 @@ def generate_serializer(text, vendor="", product="", version=""):
     tec_key = next((k for k in keys if "mitre" in _norm(k) and "technique" in _norm(k) and "sub" not in _norm(k)), None)
     mitre_keys = [k for k in keys if "mitre" in _norm(k)]
 
-    consumed = set(time_keys) | {k for k in (sev_key, act_key) if k} | set(mitre_keys)
+    if not time_keys and "starttime" in by_norm:
+        time_keys = [by_norm["starttime"]]   # used for time, and also mapped to start_time
+    time_consumed = {k for k in time_keys if _norm(k) not in ("starttime", "endtime")}
+    consumed = time_consumed | {k for k in (sev_key, act_key) if k} | set(mitre_keys)
     if fmt:
         consumed |= {k for k in keys if k in LOG_CONSUMED}
     maps, used_targets = [], set()
     for k in keys:
         if k in consumed:
             continue
-        hit = (LOG_ALIASES.get(_norm(k)) if fmt and fmt != "json" else None) or GEN_ALIASES.get(_norm(k))
+        nested = "." in k
+        hit = (LOG_ALIASES.get(_norm(k)) if fmt and fmt != "json" and not nested else None) or GEN_ALIASES.get(_norm(k))
+        if hit is None and nested and fmt in (None, "json"):
+            hit = None   # nested fields map only when the full path has an alias; the rest go to unmapped
         if hit and hit[0] not in used_targets:
             used_targets.add(hit[0])
-            maps.append((k, hit[0], hit[1] == "n"))
+            maps.append((k, hit[0], hit[1]))
             if hit[0] == "finding_info.title":
-                maps.append((k, "malware[0].name", False))
+                maps.append((k, "malware[0].name", "s"))
     mapped_names = {m[0] for m in maps}
 
     nset = {m[1] for m in maps}
@@ -1033,7 +1106,8 @@ def generate_serializer(text, vendor="", product="", version=""):
 
     map_lines = []
     for src, tgt, num in maps:
-        map_lines.append("    { source = %s, target = %s%s }," % (q(src), q(tgt), ", number = true" if num else ""))
+        flag = ", number = true" if num == "n" or num is True else (", time = true" if num == "t" else "")
+        map_lines.append("    { source = %s, target = %s%s }," % (q(src), q(tgt), flag))
     cons_lines = ["    [%s] = true," % q(k) for k in sorted(consumed)]
 
     code = GEN_TEMPLATE
@@ -1449,7 +1523,7 @@ def execute_vector(vec, cfg, stages, meta, p, run_dir, port):
     if meta["mode"] == "stdin":
         input_bytes = load_file_input(p["source"])
     elif meta["mode"] == "stdin_json":
-        recs = parse_records(p["source"].get("text", ""))
+        recs = meta.get("json_records") or parse_records(p["source"].get("text", ""))
         input_bytes = ("\n".join(json.dumps(r) for r in recs) + "\n").encode("utf-8")
     elif meta["mode"] == "http":
         http_body = str(p["source"].get("body", ""))
