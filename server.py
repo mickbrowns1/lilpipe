@@ -1238,6 +1238,62 @@ def run_serializer(code, events, lua, run_dir):
     }
 
 
+def find_busted():
+    return _first_executable([os.environ.get("BUSTED_BIN"), shutil.which("busted"),
+                              str(Path.home() / ".luarocks" / "bin" / "busted"),
+                              "/opt/homebrew/bin/busted", "/usr/local/bin/busted"])
+
+
+def run_busted(p):
+    """Run spec_live/generic_spec.lua (Busted) against the pipeline's serializer and raw records."""
+    busted = find_busted()
+    if not busted:
+        raise ApiError("Busted is not installed. In Docker it is built in (rebuild with docker compose up -d --build). "
+                       "On your Mac: brew install luajit luarocks, then luarocks --lua-version 5.1 "
+                       "--lua-dir=\"$(brew --prefix luajit)\" --local install busted", 409)
+    step = None
+    for t in (p.get("transforms") or []):
+        if t.get("type") == "lua":
+            step = t
+    if not step:
+        raise ApiError("Add a Lua serializer step first.")
+    src = p.get("source") or {}
+    if src.get("type") != "record":
+        raise ApiError("Busted checks run against the Raw record(s) source. Set the Source to Raw record(s).")
+    recs = parse_records(src.get("text", ""))[:SER_EVENT_LIMIT]
+    code = load_serializer_code(step)
+    run_dir = Path(tempfile.mkdtemp(prefix="pipelab_busted_"))
+    try:
+        ser = run_dir / "serializer.lua"
+        rec = run_dir / "records.lua"
+        ser.write_text(code, encoding="utf-8")
+        rec.write_text("return " + to_lua(recs), encoding="utf-8")
+        env = clean_env()
+        env["SERIALIZER_PATH"] = str(ser)
+        env["SAMPLE_PATH"] = str(rec)
+        try:
+            r = subprocess.run([busted, "--output=TAP", str(HERE / "spec_live" / "generic_spec.lua")],
+                               capture_output=True, text=True, timeout=120, env=env, cwd=str(run_dir))
+        except subprocess.TimeoutExpired:
+            raise ApiError("Busted took longer than 120 seconds and was stopped.")
+        raw = tidy(ANSI.sub("", (r.stdout or "") + (r.stderr or "")))
+        tests, cur = [], None
+        for line in raw.splitlines():
+            m = re.match(r"^(not ok|ok)\s+\d+\s*-?\s*(.*)$", line)
+            if m:
+                cur = {"ok": m.group(1) == "ok", "name": m.group(2), "detail": ""}
+                tests.append(cur)
+            elif cur is not None and line.startswith("#") and not cur["ok"]:
+                cur["detail"] += line.lstrip("# ").rstrip() + "\n"
+        passed = sum(1 for t in tests if t["ok"])
+        failed = len(tests) - passed
+        crashed = (not tests) and r.returncode != 0
+        return {"ok": failed == 0 and not crashed and bool(tests), "passed": passed, "failed": failed,
+                "tests": tests, "records": len(recs), "raw": raw[:6000] if (crashed or failed) else ""}
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+
 def run_pipeline(p):
     if not RUN_LOCK.acquire(blocking=False):
         raise ApiError("Another run is still in progress.", 409)
@@ -1299,12 +1355,12 @@ def run_pipeline(p):
 # Saved pipelines
 # ---------------------------------------------------------------------------
 
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,59}$")
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.,()&+-]{0,59}$")
 
 
 def pipeline_path(name):
     if not NAME_RE.match(name or ""):
-        raise ApiError("Pipeline names use letters, numbers, spaces, dots, dashes and underscores (max 60).")
+        raise ApiError("Pipeline names can use letters, numbers, spaces and . , _ - ( ) & + (max 60). Slashes and other symbols are not allowed because the name becomes a file name.")
     return PIPE_DIR / (name + ".json")
 
 
@@ -1368,7 +1424,7 @@ class Handler(BaseHTTPRequestHandler):
                 vec, lua = find_vector(), find_lua()
                 return self._json(200, {
                     "vector": bool(vec), "version": vector_version(vec) if vec else None,
-                    "lua": bool(lua), "lua_path": lua, "docker": IN_DOCKER,
+                    "lua": bool(lua), "lua_path": lua, "docker": IN_DOCKER, "busted": bool(find_busted()),
                     "install": "brew trust vectordotdev/brew && brew tap vectordotdev/brew && brew install vector",
                     "install_lua": "brew install luajit"})
             if method == "GET" and path == "/api/pipelines":
@@ -1402,6 +1458,8 @@ class Handler(BaseHTTPRequestHandler):
             if method == "POST" and path == "/api/generate":
                 b = self._read_json()
                 return self._json(200, generate_serializer(b.get("text", ""), b.get("vendor", ""), b.get("product", ""), b.get("version", "")))
+            if method == "POST" and path == "/api/busted":
+                return self._json(200, run_busted(self._read_json()))
             if method == "POST" and path == "/api/validate":
                 return self._json(200, validate_pipeline(self._read_json()))
             if method == "POST" and path == "/api/run":

@@ -502,7 +502,7 @@ function renderInspector(){
       h += field(ENV.docker ? "Serializer file (optional)" : "Serializer file on this Mac (optional)", '<input type="text" data-k="path" placeholder="' + (ENV.docker ? "/data/cato_ocsf.lua" : "~/serializers/cato_ocsf.lua") + '" value="' + esc(t.path) + '">', "If set, this file is used instead of the code below, and is re-read on every run." + pathHint());
       h += field("Or paste the serializer", '<textarea data-k="code" spellcheck="false" style="min-height:340px">' + esc(t.code) + '</textarea>',
         "Must define a global <code>processEvent(record)</code> that returns a table. Runs on local LuaJIT, so the <code>json</code> and <code>log</code> modules exist but DPM-only modules (hmac, codec) do not.");
-      h += '<div class="insp-actions"><button class="btn small" data-action="genLua">Generate from sample record</button> <button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
+      h += '<div class="insp-actions"><button class="btn small" data-action="genLua">Generate from sample record</button> <button class="btn small" data-action="busted">Run Busted checks</button> <button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
       h += field("OCSF version (used by Generate)", '<input type="text" data-k="ocsf" placeholder="1.8.0" value="' + esc(t.ocsf || "") + '">', "Stamped into metadata.version. Empty means 1.8.0.");
       h += field("Vendor / product name (used by Generate)", '<input type="text" data-k="vendor" placeholder="Cato Networks" value="' + esc(t.vendor || "") + '">', "Stamped into metadata.product and dataSource. Generate reads the Raw record(s) source, builds a first-draft OCSF serializer from the field names, and replaces the code box. Review the field map at the top, then Run.");
     } else {
@@ -750,6 +750,16 @@ document.addEventListener("click", async (ev) => {
         + g.handled.length + " handled (time, severity, action, MITRE), " + g.unmapped.length + " kept under <code>unmapped</code>"
         + (g.unmapped.length ? " (" + esc(g.unmapped.slice(0, 6).join(", ")) + (g.unmapped.length > 6 ? ", ..." : "") + ")" : "")
         + ". Press <b>Run pipeline</b> to see before and after, and edit the MAP table to fix any wrong guesses.");
+    } catch(e){ banner("err", esc(e.message)); }
+  }
+  else if(a === "busted"){
+    banner("ok", "Running Busted&hellip;");
+    try {
+      const r = await postJSON("/api/busted", pipe);
+      const rows = r.tests.map((t) => '<div>' + (t.ok ? "&#10003; " : "&#10007; <b>") + esc(t.name) + (t.ok ? "" : "</b>") + (t.ok ? "" : '<pre style="margin:2px 0 6px;white-space:pre-wrap">' + esc(t.detail || "") + '</pre>') + '</div>').join("");
+      banner(r.ok ? "ok" : "err", "<b>Busted: " + r.passed + " passed, " + r.failed + " failed</b> across " + r.records + " record(s)."
+        + '<details' + (r.ok ? "" : " open") + ' style="margin-top:6px"><summary>Show checks</summary>' + rows + '</details>'
+        + (r.raw ? '<pre style="white-space:pre-wrap;margin-top:6px">' + esc(r.raw) + '</pre>' : ""));
     } catch(e){ banner("err", esc(e.message)); }
   }
   else if(a === "serRec"){ serRec = Number(el.dataset.i); renderResults(); }
