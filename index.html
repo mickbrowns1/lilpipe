@@ -501,7 +501,8 @@ function renderInspector(){
     } else if(t.type === "lua"){
       h += field(ENV.docker ? "Serializer file (optional)" : "Serializer file on this Mac (optional)", '<input type="text" data-k="path" placeholder="' + (ENV.docker ? "/data/cato_ocsf.lua" : "~/serializers/cato_ocsf.lua") + '" value="' + esc(t.path) + '">', "If set, this file is used instead of the code below, and is re-read on every run." + pathHint());
       h += field("OCSF version (used by Generate)", '<input type="text" data-k="ocsf" placeholder="1.8.0" value="' + esc(t.ocsf || "") + '">', "Stamped into metadata.version. Empty means 1.8.0.");
-      h += field("Vendor / product name (used by Generate)", '<input type="text" data-k="vendor" placeholder="Cato Networks" value="' + esc(t.vendor || "") + '">', "Stamped into metadata.product and dataSource. Empty uses the vendor found in the sample (CEF and LEEF headers).");
+      h += field("Vendor (used by Generate)", '<input type="text" data-k="vendor" placeholder="Cisco" value="' + esc(t.vendor || "") + '">', "Stamped into metadata.product.vendor_name and dataSource.vendor. Empty uses the vendor in the sample (CEF and LEEF headers).");
+      h += field("Product (used by Generate)", '<input type="text" data-k="product" placeholder="Meraki" value="' + esc(t.product || "") + '">', "Stamped into metadata.product.name and dataSource.name. Vendor and product differ (Cisco / Meraki, Cisco / ISE, Cisco / IronPort). You can also type <code>Vendor / Product</code> in either box and it is split on the slash.");
       h += '<div class="insp-actions" style="margin:12px 0 4px"><button class="btn small" data-action="genLua">Generate from sample record</button> <button class="btn small" data-action="busted">Run Busted checks</button> <button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
       h += '<div class="hint">Generate reads the Raw record(s) source (JSON, CEF, LEEF, key=value or syslog-wrapped lines), builds a first-draft OCSF serializer, and replaces the code box below. Review the field map at the top, then Run.</div>';
       h += field("Or paste the serializer", '<textarea data-k="code" spellcheck="false" style="min-height:340px">' + esc(t.code) + '</textarea>',
@@ -753,9 +754,9 @@ document.addEventListener("click", async (ev) => {
     if(!text || !String(text).trim()){ banner("err", "Generate needs a sample record. Set the Source to <b>Raw record(s)</b> and paste an event first."); return; }
     const t = pipe.transforms[sel];
     try {
-      const g = await postJSON("/api/generate", {text: text, vendor: t.vendor || "", product: t.vendor || "", version: t.ocsf || ""});
+      const g = await postJSON("/api/generate", {text: text, vendor: t.vendor || "", product: t.product || "", version: t.ocsf || ""});
       t.code = g.code; t.path = ""; last = null; renderAll();
-      banner("ok", "Read the sample as <b>" + esc(g.format) + "</b>. Generated a <b>" + esc(g.class_name) + "</b> (" + g.class_uid + ") serializer: " + g.mapped.length + " fields mapped, "
+      banner("ok", "Read the sample as <b>" + esc(g.format) + "</b> (vendor <b>" + esc(g.vendor) + "</b>, product <b>" + esc(g.product) + "</b>). Generated a <b>" + esc(g.class_name) + "</b> (" + g.class_uid + ") serializer: " + g.mapped.length + " fields mapped, "
         + g.handled.length + " handled (time, severity, action, MITRE), " + g.unmapped.length + " kept under <code>unmapped</code>"
         + (g.unmapped.length ? " (" + esc(g.unmapped.slice(0, 6).join(", ")) + (g.unmapped.length > 6 ? ", ..." : "") + ")" : "")
         + ". Press <b>Run pipeline</b> to see before and after, edit the MAP table to fix any wrong guesses, then press <b>Save</b> (left) to keep this pipeline and its Lua.");

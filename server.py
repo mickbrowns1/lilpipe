@@ -1061,9 +1061,14 @@ def generate_serializer(text, vendor="", product="", version=""):
             raise ApiError("Could not recognise the log format. Trickle can generate from JSON, CEF, LEEF, key=value "
                            "lines, and syslog-wrapped versions of those. For other formats, parse the line into fields "
                            "first (for example a Vector remap step), then generate from the parsed JSON.")
-    if fmt and not vendor.strip():
-        vendor = (recs[0].get("device_vendor") or "").strip()
-        product = (recs[0].get("device_product") or "").strip()
+    vendor, product = (vendor or "").strip(), (product or "").strip()
+    if "/" in vendor and not product:          # Vendor / Product typed in one box
+        vendor, product = [x.strip() for x in vendor.split("/", 1)]
+    elif "/" in product and not vendor:
+        vendor, product = [x.strip() for x in product.split("/", 1)]
+    if fmt:                                    # CEF and LEEF headers carry both
+        vendor = vendor or (recs[0].get("device_vendor") or "").strip()
+        product = product or (recs[0].get("device_product") or "").strip()
     def flat_paths(d, prefix=""):
         for k, v in d.items():
             path = prefix + str(k)
@@ -1139,8 +1144,8 @@ def generate_serializer(text, vendor="", product="", version=""):
     extra = ""
     if tac_key or tec_key:
         extra = GEN_MITRE_EXTRA.replace("__TAC__", q(tac_key) if tac_key else "nil").replace("__TEC__", q(tec_key) if tec_key else "nil")
-    vendor = (vendor or "Vendor").strip() or "Vendor"
-    product = (product or vendor).strip() or vendor
+    vendor = vendor or "Vendor"
+    product = product or vendor
     version = (version or "").strip()
     if not re.match(r"^\d+\.\d+\.\d+(-dev)?$", version):
         version = "1.8.0"
@@ -1170,7 +1175,7 @@ def generate_serializer(text, vendor="", product="", version=""):
                  ("__EXTRA__", extra)]:
         code = code.replace(a, b)
     unmapped = [k for k in keys if k not in mapped_names and k not in consumed]
-    return {"code": code, "class_name": cname, "class_uid": cls, "format": FORMAT_NAMES.get(fmt, "JSON") if fmt else "JSON",
+    return {"code": code, "class_name": cname, "class_uid": cls, "format": FORMAT_NAMES.get(fmt, "JSON") if fmt else "JSON", "vendor": vendor, "product": product,
             "mapped": [{"source": m[0], "target": m[1]} for m in maps],
             "handled": sorted(consumed), "unmapped": unmapped}
 
