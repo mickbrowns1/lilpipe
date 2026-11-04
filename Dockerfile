@@ -1,4 +1,4 @@
-# Pipeline Lab: Python server + Vector + LuaJIT in one small image.
+# Trickle: Python server + Vector + LuaJIT in one small image.
 # Build:  docker compose up -d --build        (see docker-compose.yml)
 
 # Vector binary comes from the official image, so no download or install step here.
@@ -6,7 +6,7 @@
 ARG VECTOR_VERSION=0.61.0
 FROM timberio/vector:${VECTOR_VERSION}-debian AS vector
 
-FROM python:3.12-slim
+FROM python:3.12-slim AS base
 RUN apt-get update \
  && apt-get install -y --no-install-recommends luajit ca-certificates \
  && rm -rf /var/lib/apt/lists/*
@@ -17,6 +17,21 @@ WORKDIR /app
 COPY server.py index.html lua_runner.lua ./
 COPY pipelines ./pipelines
 RUN mkdir -p /app/output /data && chown -R lab:lab /app /data
+
+# Test image: adds LuaRocks + Busted (compiles luasystem, so it needs a compiler).
+# Used only by:  docker compose --profile test run --rm tests
+FROM base AS test
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends luarocks build-essential libluajit-5.1-dev \
+ && rm -rf /var/lib/apt/lists/* \
+ && luarocks --lua-version 5.1 --lua-dir /usr --tree /usr/local install busted LUA_INCDIR=/usr/include/luajit-2.1
+USER lab
+ENV LUA_PATH="/usr/local/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/?/init.lua;;" LUA_CPATH="/usr/local/lib/lua/5.1/?.so;;"
+CMD ["/usr/local/bin/busted", "spec"]
+
+# Runtime image (default; must stay the last stage)
+FROM base AS app
 USER lab
 
 ENV HOST=0.0.0.0 PORT=8790 IN_DOCKER=1 PYTHONUNBUFFERED=1

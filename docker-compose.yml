@@ -2,7 +2,9 @@
 # Then open http://127.0.0.1:8790
 services:
   pipeline-lab:
-    build: .
+    build:
+      context: .
+      target: app
     image: pipeline-lab:latest
     container_name: pipeline-lab
     restart: unless-stopped
@@ -14,3 +16,15 @@ services:
       - ./pipelines:/app/pipelines   # saved pipelines (survive rebuilds)
       - ./output:/app/output         # files written by the "Save to file" destination
       - ./data:/data:ro              # put log files and serializers here; use /data/name in the app
+
+  # Busted specs for the serializers:  docker compose --profile test run --rm tests
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    image: pipeline-lab-tests:latest
+    working_dir: /app
+    volumes:
+      - ./spec:/app/spec:ro
+      - ./data:/app/data:ro

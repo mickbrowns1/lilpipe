@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pipeline Lab</title>
+<title>Trickle</title>
 <style>
 :root{
   --bg:#f5f6f8; --panel:#ffffff; --panel2:#f0f2f5; --text:#1b1f27; --muted:#667085; --line:#dde1e7;
@@ -25,7 +25,9 @@ html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 button,input,select,textarea{font:inherit;color:inherit}
 header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
-header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px}
+header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px;line-height:1.1}
+.brand{display:flex;flex-direction:column;gap:1px}
+.brand .tag{font-size:10.5px;color:var(--muted,#6b7280);line-height:1.1;letter-spacing:.2px}
 header .sub{color:var(--muted);font-size:12px}
 header .sp{flex:1}
 .btn{border:1px solid var(--line);background:var(--panel);padding:6px 12px;border-radius:7px;cursor:pointer}
@@ -138,20 +140,20 @@ pre.ev{margin:0 0 8px;background:var(--code);border:1px solid var(--line);border
 </head>
 <body>
 <header>
-  <h1>Pipeline Lab</h1>
+  <div class="brand"><h1>Trickle</h1><div class="tag">it's only half a pipeline</div></div>
   <span class="sub" id="vecInfo">checking Vector&hellip;</span>
   <span class="sp"></span>
   <button class="btn" data-action="config">View config</button>
   <button class="btn" data-action="validate">Validate</button>
   <button class="btn primary" id="runBtn" data-action="run">&#9654; Run pipeline</button>
-  <button class="btn helpBtn" data-action="help" title="How to use Pipeline Lab (FAQ)" aria-label="Open the help and FAQ">?</button>
+  <button class="btn helpBtn" data-action="help" title="How to use Trickle (FAQ)" aria-label="Open the help and FAQ">?</button>
 </header>
 
 <div class="modal" id="helpModal" hidden>
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
-    <div class="phead"><h2 id="helpTitle">How to use Pipeline Lab</h2><button class="x" data-action="helpClose" aria-label="Close help">&times;</button></div>
+    <div class="phead"><h2 id="helpTitle">How to use Trickle</h2><button class="x" data-action="helpClose" aria-label="Close help">&times;</button></div>
     <div class="pbody">
-      <p class="muted" style="margin-top:0">Pipeline Lab lets you build a data pipeline (<b>source &rarr; steps &rarr; destination</b>), run it, and see exactly what happened to the data. Click a question to open it.</p>
+      <p class="muted" style="margin-top:0">Trickle lets you build a data pipeline (<b>source &rarr; steps &rarr; destination</b>), run it, and see exactly what happened to the data. Click a question to open it.</p>
 
       <h3>Getting started</h3>
       <details open><summary>What is this for?</summary>

@@ -1,4 +1,6 @@
-# Pipeline Lab
+# Trickle
+
+*it's only half a pipeline*
 
 A small local web app for building and testing Vector pipelines: **source -> steps -> destination**, with real event counts after every stage. It runs the real `vector` binary on your Mac. Nothing leaves your machine.
 
@@ -65,6 +67,14 @@ Stuck? Click the **?** next to *Run pipeline* for an in-app FAQ.
 With only a Lua serializer after a raw record source, Vector is not used at all. You can also put a serializer after a generator, file or HTTP source and any Vector steps; then the serializer receives the events as Vector produced them (including fields Vector adds, like `timestamp` and `source_type`).
 
 The serializer runs on your local LuaJIT, not inside the DPM runtime. `require('json')` and `require('log')` work; DPM-only modules (`hmac`, `codec`) do not. Matching in the diff is by value, so a transformed value (an ISO time turned into epoch milliseconds, `risk_level` turned into `severity_id`) shows as NOT CARRIED plus ADDED. Install LuaJIT with `brew install luajit` if the app says it cannot find Lua.
+
+## Testing serializers with Busted
+
+`spec/serializer_spec.lua` checks `data/cato_ocsf.lua` and the generator output (26 tests: class and `type_uid`, epoch-ms time, OCSF 1.8.0, `dataSource.*` mirroring `metadata.product.*`, endpoints, finding fields, and that mapped fields never leak into `unmapped`).
+
+- **In Docker (nothing to install):** `docker compose --profile test run --rm tests`. The first run builds a separate test image with LuaRocks and Busted; the app image is unchanged.
+- **On your Mac:** `brew install luajit luarocks`, then `luarocks --lua-version 5.1 --lua-dir="$(brew --prefix luajit)" --local install busted`, then `busted spec` from this folder.
+- To test your own serializer, copy the `targets` entry in the spec and point it at your file.
 
 ## Things worth knowing
 
