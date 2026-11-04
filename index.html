@@ -148,6 +148,7 @@ header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20p
   <span class="sp"></span>
   <button class="btn" data-action="config">View config</button>
   <button class="btn" data-action="validate">Validate</button>
+  <button class="btn" id="bustedBtn" data-action="busted" title="Run Busted checks on the Lua serializer" style="display:none">Run Busted</button>
   <button class="btn primary" id="runBtn" data-action="run">&#9654; Run pipeline</button>
   <button class="btn helpBtn" data-action="help" title="How to use Trickle (FAQ)" aria-label="Open the help and FAQ">?</button>
 </header>
@@ -670,7 +671,7 @@ async function loadSaved(){
     : '<div class="empty">Nothing saved yet. Name this pipeline and press Save.</div>';
 }
 
-function renderAll(){ renderFlow(); renderInspector(); renderResults(); $("pname").value = pipe.name || $("pname").value; }
+function renderAll(){ $("bustedBtn").style.display = hasLua() ? "" : "none"; renderFlow(); renderInspector(); renderResults(); $("pname").value = pipe.name || $("pname").value; }
 
 // ---------- banners ----------
 function banner(kind, html){ $("banner").innerHTML = html ? '<div class="banner ' + kind + '">' + html + '</div>' : ""; }
