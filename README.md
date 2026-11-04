@@ -52,7 +52,7 @@ Stuck? Click the **?** next to *Run pipeline* for an in-app FAQ.
 ## Testing a Lua serializer (the DPM way: source, then serializer)
 
 1. Set the **Source** to *Raw record(s)* and paste a vendor event as JSON (one object, an array, or one per line). This is what a collector hands to the serializer.
-2. Add a **Lua serializer** as the last step (the **+** after the last box, or it is already there in the default pipeline). Paste your serializer, or give a file path on your Mac (the file is re-read on every run, so you can edit it in your own editor and press Run again).
+2. No serializer yet? Select the Lua step and press **Generate from sample record**: it reads your pasted event, guesses the OCSF class and field mapping from the field names (Detection Finding, HTTP Activity, Network Activity or Base Event), and writes a complete `processEvent` with time, severity, action, MITRE, metadata and `dataSource.*` handled. It is a first draft: review the MAP table at the top, then Run. Otherwise add a **Lua serializer** as the last step (the **+** after the last box, or it is already there in the default pipeline). Paste your serializer, or give a file path on your Mac (the file is re-read on every run, so you can edit it in your own editor and press Run again).
 3. Press **Run**. The **Serializer: before / after** tab shows what the serializer *changed*, not a list of events:
    - **MOVED**: same value, new field name (`src_ip` -> `src_endpoint.ip`)
    - **TYPE CHANGED**: same value, different type (`"47046"` -> `47046`)

@@ -284,7 +284,7 @@ const STARTER_LUA = `-- Starter serializer (edit me). Input: one raw record tabl
 -- Runs here on LuaJIT, not inside the DPM runtime, so only json and log modules exist.
 local VENDOR_NAME = "Cato Networks"
 local PRODUCT_NAME = "Cato SASE"
-local OCSF_VERSION = "1.1.0"
+local OCSF_VERSION = "1.8.0"
 
 -- Raw fields this serializer maps. Everything else is kept under unmapped.
 local MAPPED = { src_ip = true, dest_ip = true, src_port = true, dest_port = true,
@@ -497,7 +497,9 @@ function renderInspector(){
       h += field(ENV.docker ? "Serializer file (optional)" : "Serializer file on this Mac (optional)", '<input type="text" data-k="path" placeholder="' + (ENV.docker ? "/data/cato_ocsf.lua" : "~/serializers/cato_ocsf.lua") + '" value="' + esc(t.path) + '">', "If set, this file is used instead of the code below, and is re-read on every run." + pathHint());
       h += field("Or paste the serializer", '<textarea data-k="code" spellcheck="false" style="min-height:340px">' + esc(t.code) + '</textarea>',
         "Must define a global <code>processEvent(record)</code> that returns a table. Runs on local LuaJIT, so the <code>json</code> and <code>log</code> modules exist but DPM-only modules (hmac, codec) do not.");
-      h += '<div class="insp-actions"><button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
+      h += '<div class="insp-actions"><button class="btn small" data-action="genLua">Generate from sample record</button> <button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
+      h += field("OCSF version (used by Generate)", '<input type="text" data-k="ocsf" placeholder="1.8.0" value="' + esc(t.ocsf || "") + '">', "Stamped into metadata.version. Empty means 1.8.0.");
+      h += field("Vendor / product name (used by Generate)", '<input type="text" data-k="vendor" placeholder="Cato Networks" value="' + esc(t.vendor || "") + '">', "Stamped into metadata.product and dataSource. Generate reads the Raw record(s) source, builds a first-draft OCSF serializer from the field names, and replaces the code box. Review the field map at the top, then Run.");
     } else {
       h += field("Fields that must match (comma separated)", '<input type="text" data-k="fields" value="' + esc(t.fields) + '">', "Events with identical values in all these fields are treated as repeats. Empty uses Vector's defaults, which include the timestamp.");
     }
@@ -731,6 +733,20 @@ document.addEventListener("click", async (ev) => {
   else if(a === "menu"){ ev.stopPropagation(); const at = Number(el.dataset.at); menuAt = menuAt === at ? null : at; renderFlow(); }
   else if(a === "add"){ const at = Number(el.dataset.at); pipe.transforms.splice(at, 0, newTransform(el.dataset.type)); sel = at; menuAt = null; last = null; renderAll(); }
   else if(a === "starterLua"){ pipe.transforms[sel].code = STARTER_LUA; pipe.transforms[sel].path = ""; last = null; renderAll(); }
+  else if(a === "genLua"){
+    const src = pipe.source || {};
+    const text = src.type === "record" ? src.text : src.type === "http" ? src.body : src.text;
+    if(!text || !String(text).trim()){ banner("err", "Generate needs a sample record. Set the Source to <b>Raw record(s)</b> and paste an event first."); return; }
+    const t = pipe.transforms[sel];
+    try {
+      const g = await postJSON("/api/generate", {text: text, vendor: t.vendor || "", product: t.vendor || "", version: t.ocsf || ""});
+      t.code = g.code; t.path = ""; last = null; renderAll();
+      banner("ok", "Generated a <b>" + esc(g.class_name) + "</b> (" + g.class_uid + ") serializer: " + g.mapped.length + " fields mapped, "
+        + g.handled.length + " handled (time, severity, action, MITRE), " + g.unmapped.length + " kept under <code>unmapped</code>"
+        + (g.unmapped.length ? " (" + esc(g.unmapped.slice(0, 6).join(", ")) + (g.unmapped.length > 6 ? ", ..." : "") + ")" : "")
+        + ". Press <b>Run pipeline</b> to see before and after, and edit the MAP table to fix any wrong guesses.");
+    } catch(e){ banner("err", esc(e.message)); }
+  }
   else if(a === "serRec"){ serRec = Number(el.dataset.i); renderResults(); }
   else if(a === "serView"){ serView = el.dataset.v; renderResults(); }
   else if(a === "serKind"){ serHide[el.dataset.k] = !serHide[el.dataset.k]; renderResults(); }

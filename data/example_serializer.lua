@@ -2,7 +2,7 @@
 -- Runs here on LuaJIT, not inside the DPM runtime, so only json and log modules exist.
 local VENDOR_NAME = "Cato Networks"
 local PRODUCT_NAME = "Cato SASE"
-local OCSF_VERSION = "1.1.0"
+local OCSF_VERSION = "1.8.0"
 
 -- Raw fields this serializer maps. Everything else is kept under unmapped.
 local MAPPED = { src_ip = true, dest_ip = true, src_port = true, dest_port = true,
