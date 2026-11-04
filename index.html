@@ -118,6 +118,22 @@ pre.ev{margin:0 0 8px;background:var(--code);border:1px solid var(--line);border
 .seg button{border:0;background:var(--panel);padding:3px 10px;cursor:pointer;font-size:12px}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
 .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.helpBtn{width:32px;height:32px;padding:0;border-radius:50%;font-weight:700;font-size:15px;line-height:1}
+.modal{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.5);display:flex;align-items:flex-start;justify-content:center;padding:4vh 14px;overflow-y:auto}
+.modal[hidden]{display:none}
+.modal .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.4);width:min(760px,100%);max-height:92vh;display:flex;flex-direction:column}
+.modal .phead{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line)}
+.modal .phead h2{margin:0;font-size:17px;text-transform:none;letter-spacing:0;color:var(--text);padding:0;border:0}
+.modal .phead .x{font-size:24px;padding:0 6px}
+.modal .pbody{padding:6px 18px 18px;overflow-y:auto}
+.modal h3{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin:20px 0 6px}
+.modal details{border:1px solid var(--line);border-radius:9px;margin:6px 0;background:var(--panel)}
+.modal summary{cursor:pointer;padding:9px 12px;font-weight:600}
+.modal details[open] summary{border-bottom:1px solid var(--line)}
+.modal details > :not(summary){margin:10px 12px}
+.modal p,.modal ol{margin:10px 12px;line-height:1.55}
+.modal ol{padding-left:20px}
+.modal code{font:12.5px ui-monospace,Menlo,monospace;background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
 </style>
 </head>
 <body>
@@ -128,7 +144,72 @@ pre.ev{margin:0 0 8px;background:var(--code);border:1px solid var(--line);border
   <button class="btn" data-action="config">View config</button>
   <button class="btn" data-action="validate">Validate</button>
   <button class="btn primary" id="runBtn" data-action="run">&#9654; Run pipeline</button>
+  <button class="btn helpBtn" data-action="help" title="How to use Pipeline Lab (FAQ)" aria-label="Open the help and FAQ">?</button>
 </header>
+
+<div class="modal" id="helpModal" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="phead"><h2 id="helpTitle">How to use Pipeline Lab</h2><button class="x" data-action="helpClose" aria-label="Close help">&times;</button></div>
+    <div class="pbody">
+      <p class="muted" style="margin-top:0">Pipeline Lab lets you build a data pipeline (<b>source &rarr; steps &rarr; destination</b>), run it, and see exactly what happened to the data. Click a question to open it.</p>
+
+      <h3>Getting started</h3>
+      <details open><summary>What is this for?</summary>
+        <p>Testing before you ship. You can check how a Lua serializer maps a vendor log to OCSF, try Vector filter/remap/sample/dedupe steps, and measure how much volume a pipeline removes, all without touching a tenant or sending data anywhere.</p></details>
+      <details><summary>What is the quickest way to try it?</summary>
+        <ol><li>Leave the source as <b>Raw record(s)</b> (a sample Cato event is preloaded) and the second box as <b>Lua serializer</b>.</li>
+        <li>Press <b>&#9654; Run pipeline</b>.</li>
+        <li>Read the <b>Serializer: before / after</b> tab below the pipeline.</li></ol></details>
+      <details><summary>What are the three kinds of boxes?</summary>
+        <p><b>Source</b> is where data comes from. <b>Steps</b> change it (filter, remap, sample, dedupe, or a Lua serializer). <b>Destination</b> is where it ends up. Click any box to edit it on the right. Click the <b>+</b> between boxes to add a step.</p></details>
+
+      <h3>Testing a Lua serializer</h3>
+      <details><summary>How do I test my own serializer?</summary>
+        <ol><li>Click the <b>Source</b> box and paste a real vendor event as JSON (one object, an array, or one per line).</li>
+        <li>Click the <b>Lua serializer</b> box and paste your code, or type a file path (re-read on every run, so you can edit in your own editor and press Run again).</li>
+        <li>Your code must define <code>function processEvent(record)</code> that returns a table.</li>
+        <li>Press Run.</li></ol></details>
+      <details><summary>What do MOVED, TYPE CHANGED, NOT CARRIED and ADDED mean?</summary>
+        <p><b>MOVED</b>: same value, new field name (<code>src_ip</code> &rarr; <code>src_endpoint.ip</code>). <b>TYPE CHANGED</b>: same value, different type (<code>"47046"</code> &rarr; <code>47046</code>). <b>CHANGED</b>: same field, new value. <b>NOT CARRIED</b>: the value is not in the output, so it was dropped or transformed. <b>ADDED</b>: new in the output, such as <code>class_uid</code> or <code>dataSource.*</code>. <b>SAME</b>, <b>UNMAPPED</b> and <b>EMPTY</b> are hidden by default; click their chips to show them.</p></details>
+      <details><summary>Why does a field I converted show as NOT CARRIED plus ADDED?</summary>
+        <p>The comparison matches by value. If your serializer transforms a value (for example <code>risk_level "Medium"</code> becomes <code>severity_id 3</code>, or an ISO time becomes epoch milliseconds), the original value no longer appears, so it shows as NOT CARRIED and the new field as ADDED. That is expected.</p></details>
+      <details><summary>What are the PASS/FAIL checks above the diff?</summary>
+        <p>Quick OCSF sanity checks on every record: class, category and activity are set; <code>type_uid = class_uid &times; 100 + activity_id</code>; <code>time</code> is a number in epoch milliseconds; <code>metadata.version</code> and <code>metadata.product.*</code> are set; and <code>dataSource.category/vendor/name</code> are set and match <code>metadata.product</code> (needed for events to show up in XDR search). A FAIL shows which record failed first.</p></details>
+      <details><summary>What is the &ldquo;Console lint&rdquo; box?</summary>
+        <p>It flags code the DPM console would likely reject when you save the script: a string continued with <code>..</code> at the end of a line, <code>//</code> and other Lua 5.3 syntax, <code>$something</code> anywhere in the file, an apostrophe in a comment, or missing <code>dataSource.*</code> fields. Fix these before pasting into the console.</p></details>
+      <details><summary>How is this different from the real DPM runtime?</summary>
+        <p>The serializer runs on a local LuaJIT, not inside DPM. <code>json</code> and <code>log</code> work, but DPM-only modules such as <code>hmac</code> and <code>codec</code> do not. Treat this as a fast check, and still save the script in the console as the final test.</p></details>
+
+      <h3>The buttons</h3>
+      <details><summary>Run, Validate and View config: what is the difference?</summary>
+        <p><b>Run pipeline</b> does the work and shows the results. <b>Validate</b> checks without running: real Vector checks your config and VRL, and the Lua serializer is checked for loading and lint. <b>View config</b> shows the Vector config file generated from your pipeline. It is empty for a raw record plus serializer, because Vector is not used in that case.</p></details>
+      <details><summary>What do I see after a run?</summary>
+        <p>For Vector steps: events in and out after every stage, the volume saved (as JSON size), and sample events at each stage (<b>Stage events</b> tab). Warnings from Vector are in the <b>Vector log</b> tab. With a serializer: the <b>Serializer: before / after</b> tab, with a switch to see the full OCSF output or the raw input.</p></details>
+
+      <h3>Vector steps (filter, remap, sample, dedupe)</h3>
+      <details><summary>How do I test noise reduction?</summary>
+        <p>Set the source to <b>Sample log generator</b> (or paste your own lines with <b>File</b>), add steps, and press Run. Each box shows <i>in &rarr; out</i> with the percentage removed, so you can see which step does the work. Use the <b>Save to file</b> or <b>Print to screen</b> destination to see the final events.</p></details>
+      <details><summary>What do the step types do?</summary>
+        <p><b>Filter</b> keeps events where a VRL condition is true. <b>Remap</b> runs a VRL program to parse, rename, add or delete fields (there is a preset menu). <b>Sample</b> keeps 1 of every N events. <b>Dedupe</b> drops repeats that have the same values in the fields you list. Order matters: a filter on <code>.severity</code> only works after a remap has parsed it.</p></details>
+      <details><summary>What does the Dev/null destination mean?</summary>
+        <p>The events go nowhere and nothing is stored, so you can test freely. You still get all the counts and the before/after view, because those are measured inside the pipeline.</p></details>
+      <details><summary>A step shows warnings or the Vector log has ERROR lines. What happened?</summary>
+        <p>Usually a VRL step failed on some events, for example <code>parse_json</code> on a line that is not JSON. Those events pass through unchanged and the run continues. Open the <b>Vector log</b> tab for the message, then fix the VRL or filter those events out first. <b>Validate</b> catches syntax errors before you run.</p></details>
+      <details><summary>Why does an HTTP source run take a few seconds?</summary>
+        <p>Lab starts a temporary Vector listener, sends your body, then stops it a few seconds later. A listener never finishes on its own, so it is stopped after the input is used up.</p></details>
+
+      <h3>Files, saving and setup</h3>
+      <details><summary>How do I use my own log file or serializer file?</summary>
+        <p>Running in Docker: put the file in the <code>data</code> folder next to <code>docker-compose.yml</code> and type <code>/data/yourfile</code> in the app. Running without Docker: type the normal path, for example <code>~/Downloads/sample.log</code>. You can also just paste text into the box.</p></details>
+      <details><summary>How do I save and reuse a pipeline?</summary>
+        <p>Type a name in <b>Saved pipelines</b> (left) and press <b>Save</b>. Click a saved pipeline to load it, or &times; to delete it. They are stored in the <code>pipelines</code> folder, so you can share them or keep them in Git. Files from <b>Save to file</b> go to the <code>output</code> folder.</p></details>
+      <details><summary>It says Vector or Lua was not found, or &ldquo;server offline&rdquo;.</summary>
+        <p>In Docker both are included; check the container is running with <code>docker compose ps</code>. Without Docker, install them with <code>brew install luajit</code> and <code>brew trust vectordotdev/brew &amp;&amp; brew tap vectordotdev/brew &amp;&amp; brew install vector</code>, then restart <code>server.py</code>. &ldquo;Server offline&rdquo; means the app itself is not running.</p></details>
+      <details><summary>Is my data sent anywhere?</summary>
+        <p>No. Everything runs on your machine and the app only accepts connections from it. Do not paste real customer logs into anything you plan to share or commit.</p></details>
+    </div>
+  </div>
+</div>
 
 <div id="banner"></div>
 
@@ -656,6 +737,8 @@ document.addEventListener("click", async (ev) => {
   else if(a === "del"){ pipe.transforms.splice(sel, 1); sel = "source"; last = null; renderAll(); }
   else if(a === "up"){ const t = pipe.transforms.splice(sel, 1)[0]; pipe.transforms.splice(sel - 1, 0, t); sel -= 1; last = null; renderAll(); }
   else if(a === "down"){ const t = pipe.transforms.splice(sel, 1)[0]; pipe.transforms.splice(sel + 1, 0, t); sel += 1; last = null; renderAll(); }
+  else if(a === "help"){ $("helpModal").hidden = false; $("helpModal").querySelector(".pbody").scrollTop = 0; $("helpModal").querySelector(".x").focus(); }
+  else if(a === "helpClose"){ $("helpModal").hidden = true; }
   else if(a === "run"){ doRun(); }
   else if(a === "validate"){ doValidate(); }
   else if(a === "config"){ doConfig(); }
@@ -707,6 +790,8 @@ document.addEventListener("change", (ev) => {
   }
 });
 $("pname").addEventListener("input", () => { pipe.name = $("pname").value; });
+document.addEventListener("keydown", (ev) => { if(ev.key === "Escape") $("helpModal").hidden = true; });
+$("helpModal").addEventListener("mousedown", (ev) => { if(ev.target === $("helpModal")) $("helpModal").hidden = true; });
 
 // ---------- boot ----------
 (async function boot(){

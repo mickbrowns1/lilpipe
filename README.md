@@ -40,6 +40,8 @@ The app works without Vector installed (you can build pipelines), but Run and Va
 
 ## How to use it
 
+Stuck? Click the **?** next to *Run pipeline* for an in-app FAQ.
+
 - Click a box to edit it on the right. Click the **+** between boxes to add a step.
 - **Sources**: sample log generator, a file (path or pasted text), or an HTTP listener.
 - **Steps**: filter (VRL condition), remap (VRL), sample (1 of every N), dedupe (match fields). Use *Move earlier/later* to reorder.
