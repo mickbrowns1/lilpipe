@@ -500,11 +500,12 @@ function renderInspector(){
       h += field("Keep 1 of every N events", '<input type="number" data-k="n" min="1" value="' + esc(t.n) + '">', "N = 10 keeps about 10% of events.");
     } else if(t.type === "lua"){
       h += field(ENV.docker ? "Serializer file (optional)" : "Serializer file on this Mac (optional)", '<input type="text" data-k="path" placeholder="' + (ENV.docker ? "/data/cato_ocsf.lua" : "~/serializers/cato_ocsf.lua") + '" value="' + esc(t.path) + '">', "If set, this file is used instead of the code below, and is re-read on every run." + pathHint());
+      h += field("OCSF version (used by Generate)", '<input type="text" data-k="ocsf" placeholder="1.8.0" value="' + esc(t.ocsf || "") + '">', "Stamped into metadata.version. Empty means 1.8.0.");
+      h += field("Vendor / product name (used by Generate)", '<input type="text" data-k="vendor" placeholder="Cato Networks" value="' + esc(t.vendor || "") + '">', "Stamped into metadata.product and dataSource. Empty uses the vendor found in the sample (CEF and LEEF headers).");
+      h += '<div class="insp-actions" style="margin:12px 0 4px"><button class="btn small" data-action="genLua">Generate from sample record</button> <button class="btn small" data-action="busted">Run Busted checks</button> <button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
+      h += '<div class="hint">Generate reads the Raw record(s) source (JSON, CEF, LEEF, key=value or syslog-wrapped lines), builds a first-draft OCSF serializer, and replaces the code box below. Review the field map at the top, then Run.</div>';
       h += field("Or paste the serializer", '<textarea data-k="code" spellcheck="false" style="min-height:340px">' + esc(t.code) + '</textarea>',
         "Must define a global <code>processEvent(record)</code> that returns a table. Runs on local LuaJIT, so the <code>json</code> and <code>log</code> modules exist but DPM-only modules (hmac, codec) do not.");
-      h += '<div class="insp-actions"><button class="btn small" data-action="genLua">Generate from sample record</button> <button class="btn small" data-action="busted">Run Busted checks</button> <button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
-      h += field("OCSF version (used by Generate)", '<input type="text" data-k="ocsf" placeholder="1.8.0" value="' + esc(t.ocsf || "") + '">', "Stamped into metadata.version. Empty means 1.8.0.");
-      h += field("Vendor / product name (used by Generate)", '<input type="text" data-k="vendor" placeholder="Cato Networks" value="' + esc(t.vendor || "") + '">', "Stamped into metadata.product and dataSource. Generate reads the Raw record(s) source, builds a first-draft OCSF serializer from the field names, and replaces the code box. Review the field map at the top, then Run.");
     } else {
       h += field("Fields that must match (comma separated)", '<input type="text" data-k="fields" value="' + esc(t.fields) + '">', "Events with identical values in all these fields are treated as repeats. Empty uses Vector's defaults, which include the timestamp.");
     }
