@@ -1,0 +1,19 @@
+{
+  "name": "varonis",
+  "source": {
+    "type": "file",
+    "path": "",
+    "text": "0|Varonis Inc.|DatAdvantage|8.6.32|5011|User locked out|3|rt=Oct 14 2024 11:33:57 cat=Alert cs2=Lockout: Multiple account lock-out events cs2Label=RuleName cn1=136 cn1Label=RuleID end=Oct 14 2024 11:33:51 duser=COMPANY.LOCAL\\John Doe dhost=host.example.com filePath=COMPANY.LOCAL/Company/arborescence/John DOE fname=John DOE act=User locked out dvchost= dvc= outcome=Success msg= cs3= cs3Label=AttachmentName cs4=http://example.com/DatAdvantage/#/app/analytics/entity/Alert/12345678-abcd-1234-5678-abcdef012345 cs4Label=ClientAccessType deviceCustomDate1= fileType= cs1= cs1Label=MailRecipient suser= cs5= cs5Label=MailboxAccessType cnt=5 cs6= cs6Label=ChangedPermissions oldFilePermission= filePermission= dpriv= start=Oct 14 2024 11:29:48 DescriptionRule=Several account lock-out events occurred within a short time frame. This may indicate a brute-force attack aimed at stealing users' credentials, or causing a denial-of-service for multiple users. DescriptionAlert= RuleStoryline= Path=COMPANY.LOCAL/Company/arborescence/John DOE ActingObjectSAM=User1 ActingObjectDomaineName=COMPANY.LOCAL AlertCategory=Intrusion AffectedObjectSAM=User1 AffectedObjectDomain=COMPANY.LOCAL DestinationDip= DestinationDeviceName="
+  },
+  "transforms": [
+    {
+      "type": "lua",
+      "path": "",
+      "code": "-- Starter serializer (edit me). Input: one raw record table. Output: a flat OCSF table.\n-- Runs here on LuaJIT, not inside the DPM runtime, so only json and log modules exist.\nlocal VENDOR_NAME = \"Cato Networks\"\nlocal PRODUCT_NAME = \"Cato SASE\"\nlocal OCSF_VERSION = \"1.8.0\"\n\n-- Raw fields this serializer maps. Everything else is kept under unmapped.\nlocal MAPPED = { src_ip = true, dest_ip = true, src_port = true, dest_port = true,\n                 ip_protocol = true, action = true, risk_level = true, time = true }\n\nlocal SEVERITY = { Low = 2, Medium = 3, High = 4, Critical = 5 }\n\nfunction processEvent(record)\n    local out = {}\n    out[\"class_uid\"] = 4001\n    out[\"category_uid\"] = 4\n    out[\"activity_id\"] = 6\n    out[\"type_uid\"] = 4001 * 100 + 6\n    out[\"time\"] = tonumber(record.time) or 0\n    out[\"severity_id\"] = SEVERITY[record.risk_level] or 0\n    out[\"action\"] = record.action\n    out[\"src_endpoint.ip\"] = record.src_ip\n    out[\"src_endpoint.port\"] = tonumber(record.src_port)\n    out[\"dst_endpoint.ip\"] = record.dest_ip\n    out[\"dst_endpoint.port\"] = tonumber(record.dest_port)\n    out[\"connection_info.protocol_name\"] = record.ip_protocol\n\n    out[\"metadata.version\"] = OCSF_VERSION\n    out[\"metadata.product.vendor_name\"] = VENDOR_NAME\n    out[\"metadata.product.name\"] = PRODUCT_NAME\n    out[\"dataSource.category\"] = \"security\"\n    out[\"dataSource.vendor\"] = VENDOR_NAME\n    out[\"dataSource.name\"] = PRODUCT_NAME\n\n    local unmapped = {}\n    for k, v in pairs(record) do\n        if not MAPPED[k] then unmapped[k] = v end\n    end\n    out[\"unmapped\"] = unmapped\n    return out\nend\n"
+    }
+  ],
+  "sink": {
+    "type": "devnull",
+    "filename": "pipeline-output.ndjson"
+  }
+}

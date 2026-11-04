@@ -754,7 +754,7 @@ document.addEventListener("click", async (ev) => {
     try {
       const g = await postJSON("/api/generate", {text: text, vendor: t.vendor || "", product: t.vendor || "", version: t.ocsf || ""});
       t.code = g.code; t.path = ""; last = null; renderAll();
-      banner("ok", "Generated a <b>" + esc(g.class_name) + "</b> (" + g.class_uid + ") serializer: " + g.mapped.length + " fields mapped, "
+      banner("ok", "Read the sample as <b>" + esc(g.format) + "</b>. Generated a <b>" + esc(g.class_name) + "</b> (" + g.class_uid + ") serializer: " + g.mapped.length + " fields mapped, "
         + g.handled.length + " handled (time, severity, action, MITRE), " + g.unmapped.length + " kept under <code>unmapped</code>"
         + (g.unmapped.length ? " (" + esc(g.unmapped.slice(0, 6).join(", ")) + (g.unmapped.length > 6 ? ", ..." : "") + ")" : "")
         + ". Press <b>Run pipeline</b> to see before and after, and edit the MAP table to fix any wrong guesses.");

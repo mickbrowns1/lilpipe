@@ -331,7 +331,10 @@ def parse_records(text):
             try:
                 recs.append(json.loads(line))
             except ValueError:
-                raise ApiError("Line %d of the raw records is not valid JSON." % n)
+                if line.lstrip().startswith(("{", "[")):
+                    raise ApiError("Line %d looks like JSON but is not valid JSON (check commas and quotes)." % n)
+                recs.append({"message": line.strip()})   # a text log line (CEF, LEEF, key=value, syslog) arrives as a message
+
     if not recs:
         raise ApiError("No records found in the raw record source.")
     if len(recs) > MAX_RECORDS:
@@ -416,10 +419,318 @@ _alias("popname region", "cloud.region")
 _alias("internalid eventid id uid guid", "metadata.uid")
 _alias("eventcount count", "count", "n")
 _alias("message msg description", "message")
+_alias("sysloghost", "device.hostname")
 
-GEN_TIME_KEYS = ["time", "timestamp", "eventtimestamp", "eventtime", "ts", "datetime", "createdat", "date"]
-GEN_SEV_KEYS = ["risklevel", "severity", "risk", "level", "priority"]
-GEN_ACTION_KEYS = ["action", "disposition", "verdict", "outcome"]
+GEN_TIME_KEYS = ["time", "timestamp", "eventtimestamp", "eventtime", "ts", "datetime", "createdat", "date", "rt", "end", "start", "devtime", "syslogtime"]
+GEN_SEV_KEYS = ["risklevel", "severity", "sev", "risk", "level", "priority"]
+GEN_ACTION_KEYS = ["action", "act", "disposition", "verdict", "outcome"]
+
+
+# ---- Log format support: CEF, LEEF, key=value, JSON-in-message, syslog wrappers ------
+CEF_HEADER = ["cef_version", "device_vendor", "device_product", "device_version", "signature_id", "name", "severity"]
+LEEF_HEADER = ["leef_version", "device_vendor", "device_product", "device_version", "signature_id"]
+# normalised key -> (OCSF path, kind). Applied to non-JSON formats (CEF, LEEF, key=value).
+LOG_ALIASES = {
+    "name": ("finding_info.title", "s"), "deviceversion": ("metadata.product.version", "s"),
+    "src": ("src_endpoint.ip", "s"), "spt": ("src_endpoint.port", "n"), "shost": ("src_endpoint.hostname", "s"),
+    "smac": ("src_endpoint.mac", "s"), "dst": ("dst_endpoint.ip", "s"), "dpt": ("dst_endpoint.port", "n"),
+    "dhost": ("dst_endpoint.hostname", "s"), "dmac": ("dst_endpoint.mac", "s"),
+    "proto": ("connection_info.protocol_name", "s"), "suser": ("actor.user.name", "s"),
+    "usrname": ("actor.user.name", "s"), "fname": ("file.name", "s"), "filepath": ("file.path", "s"),
+    "filehash": ("file.hashes[0].value", "s"), "request": ("http_request.url.url_string", "s"),
+    "requestmethod": ("http_request.http_method", "s"), "requestclientapplication": ("http_request.user_agent", "s"),
+    "app": ("app_name", "s"), "msg": ("message", "s"), "cat": ("finding_info.types[0]", "s"),
+    "externalid": ("metadata.uid", "s"), "dvchost": ("device.hostname", "s"), "devicehostname": ("device.hostname", "s"),
+    "dvc": ("device.ip", "s"), "cnt": ("count", "n"), "in": ("traffic.bytes_in", "n"), "out": ("traffic.bytes_out", "n"),
+    "sysloghost": ("device.hostname", "s"),
+}
+LOG_CONSUMED = {"cef_version", "leef_version", "device_vendor", "device_product", "syslog_app"}
+FORMAT_NAMES = {"cef": "CEF", "leef": "LEEF", "kv": "key=value", "json": "JSON in a message"}
+
+
+def strip_syslog(line):
+    """Return (payload, syslog_fields). Understands RFC 5424 and RFC 3164 wrappers."""
+    m = re.match(r"^<\d+>1\s+(\S+)\s+(\S+)\s+(\S+)\s+\S+\s+\S+\s+(.*)$", line)
+    if m:
+        tail = m.group(4)
+        if tail.startswith("-"):
+            tail = tail[1:].lstrip()
+        else:
+            while tail.startswith("["):
+                close = tail.find("]")
+                if close < 0:
+                    break
+                tail = tail[close + 1:]
+            tail = tail.lstrip()
+        return tail, {"syslog_time": m.group(1), "syslog_host": m.group(2), "syslog_app": m.group(3)}
+    m = re.match(r"^(?:<\d+>)?([A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+)\s+(\S+)\s+(.*)$", line)
+    if m:
+        payload = re.sub(r"^[\w\-./]+(\[\d+\])?:\s+", "", m.group(3))
+        return payload, {"syslog_host": m.group(2)}
+    return line, {}
+
+
+def parse_leef_py(payload):
+    i = payload.find("LEEF:")
+    if i < 0:
+        return None
+    parts = payload[i + 5:].split("|", 5)
+    if len(parts) < 6:
+        return None
+    rec = dict(zip(LEEF_HEADER, parts[:5]))
+    rest = parts[5]
+    delim = "\t"
+    if rec["leef_version"].startswith("2"):
+        head, _, rest = rest.partition("|")
+        if head:
+            delim = chr(int(head[1:], 16)) if head.lower().startswith("x") and len(head) > 1 else head[0]
+    for pair in rest.split(delim):
+        k, eq, v = pair.partition("=")
+        if eq and k.strip():
+            rec[k.strip()] = v
+    return rec
+
+
+def parse_cef_py(payload):
+    i = payload.find("CEF:")
+    if i < 0:
+        return None
+    rest = payload[i + 4:]
+    rec, pos = {}, 0
+    for name in CEF_HEADER:
+        j = pos
+        while True:
+            p = rest.find("|", j)
+            if p < 0:
+                return None
+            b, k = 0, p - 1
+            while k >= pos and rest[k] == "\\":
+                b += 1
+                k -= 1
+            if b % 2 == 0:
+                rec[name] = rest[pos:p].replace("\\|", "|").replace("\\\\", "\\")
+                pos = p + 1
+                break
+            j = p + 1
+    ext = rest[pos:]
+    keys = [m for m in re.finditer(r"([\w.\-]+)=", ext) if m.start() == 0 or ext[m.start() - 1] == " "]
+    for n, m in enumerate(keys):
+        end = keys[n + 1].start() - 1 if n + 1 < len(keys) else len(ext)
+        rec[m.group(1)] = ext[m.end():end].strip().replace("\\=", "=").replace("\\n", "\n").replace("\\\\", "\\")
+    for n in range(1, 7):                      # csN / csNLabel pairs become named fields
+        lab, val = rec.pop("cs%dLabel" % n, None), rec.get("cs%d" % n)
+        if lab and val is not None:
+            rec.pop("cs%d" % n, None)
+            rec[lab] = val
+    return rec
+
+
+def parse_kv_py(payload):
+    rec = {}
+    for m in re.finditer(r'([\w.\-]+)="([^"]*)"', payload):
+        rec[m.group(1)] = m.group(2)
+    stripped = re.sub(r'[\w.\-]+="[^"]*"', " ", payload)
+    for m in re.finditer(r"([\w.\-]+)=(\S+)", stripped):
+        rec[m.group(1)] = m.group(2)
+    return rec if len(rec) >= 2 else None
+
+
+def detect_log(line):
+    """Return (format, fields) for a text log line, or (None, None)."""
+    payload, sys_fields = strip_syslog(line.strip())
+    rec, fmt = None, None
+    if "CEF:" in payload:
+        rec, fmt = parse_cef_py(payload), "cef"
+    elif "LEEF:" in payload:
+        rec, fmt = parse_leef_py(payload), "leef"
+    elif payload.lstrip().startswith("{"):
+        try:
+            d = json.loads(payload)
+            if isinstance(d, dict):
+                rec, fmt = d, "json"
+        except ValueError:
+            pass
+    if rec is None:
+        rec, fmt = parse_kv_py(payload), "kv"
+    if rec is None:
+        return None, None
+    rec.update(sys_fields)
+    return fmt, rec
+
+
+GEN_CEF_FUNCS = r"""
+-- CEF parser: header is CEF:ver|vendor|product|version|signature|name|severity|extension.
+local function cefUnescape(v)
+    v = string.gsub(v, "\\=", "=")
+    v = string.gsub(v, "\\n", "\n")
+    v = string.gsub(v, "\\\\", "\\")
+    return v
+end
+
+local function parseCef(payload)
+    local at = string.find(payload, "CEF:", 1, true)
+    if not at then return nil end
+    local rest = string.sub(payload, at + 4)
+    local names = { "cef_version", "device_vendor", "device_product", "device_version", "signature_id", "name", "severity" }
+    local rec = {}
+    local pos = 1
+    for i = 1, 7 do
+        local j = pos
+        while true do
+            local p = string.find(rest, "|", j, true)
+            if not p then return nil end
+            local b = 0
+            local k = p - 1
+            while k >= pos and string.sub(rest, k, k) == "\\" do b = b + 1; k = k - 1 end
+            if b % 2 == 0 then
+                local h = string.sub(rest, pos, p - 1)
+                h = string.gsub(h, "\\|", "|")
+                h = string.gsub(h, "\\\\", "\\")
+                rec[names[i]] = h
+                pos = p + 1
+                break
+            end
+            j = p + 1
+        end
+    end
+    local ext = string.sub(rest, pos)
+    local keys = {}
+    local idx = 1
+    while true do
+        local s1, e1, key = string.find(ext, "([%w_%.%-]+)=", idx)
+        if not s1 then break end
+        local prev = " "
+        if s1 > 1 then prev = string.sub(ext, s1 - 1, s1 - 1) end
+        if prev == " " then table.insert(keys, { key = key, s = s1, e = e1 }) end
+        idx = e1 + 1
+    end
+    for n = 1, #keys do
+        local stop = string.len(ext)
+        if keys[n + 1] then stop = keys[n + 1].s - 2 end
+        local val = string.sub(ext, keys[n].e + 1, stop)
+        val = string.gsub(val, "^%s+", "")
+        val = string.gsub(val, "%s+$", "")
+        rec[keys[n].key] = cefUnescape(val)
+    end
+    for n = 1, 6 do
+        local lab = rec["cs" .. n .. "Label"]
+        local val = rec["cs" .. n]
+        rec["cs" .. n .. "Label"] = nil
+        if lab and val ~= nil then
+            rec["cs" .. n] = nil
+            rec[lab] = val
+        end
+    end
+    return rec
+end
+"""
+
+
+LUA_PARSE = {
+"json": r"""local json = require('json')
+""",
+"syslog": r"""
+-- Strip an RFC 5424 or RFC 3164 syslog wrapper. Returns the payload and the syslog fields.
+local function stripSyslog(line)
+    local fields = {}
+    local ts, host, app, tail = string.match(line, "^<%d+>1%s+(%S+)%s+(%S+)%s+(%S+)%s+%S+%s+%S+%s+(.*)$")
+    if ts then
+        fields.syslog_time = ts
+        fields.syslog_host = host
+        fields.syslog_app = app
+        if string.sub(tail, 1, 1) == "-" then
+            tail = string.gsub(tail, "^%-%s*", "")
+        else
+            while string.sub(tail, 1, 1) == "[" do
+                local close = string.find(tail, "]", 1, true)
+                if not close then break end
+                tail = string.sub(tail, close + 1)
+            end
+            tail = string.gsub(tail, "^%s+", "")
+        end
+        return tail, fields
+    end
+    local h3, rest = string.match(line, "^<?%d*>?%a%a%a%s+%d+%s+%d+:%d+:%d+%s+(%S+)%s+(.*)$")
+    if h3 then
+        fields.syslog_host = h3
+        rest = string.gsub(rest, "^[%w_%-%./]+%[?%d*%]?:%s+", "")
+        return rest, fields
+    end
+    return line, fields
+end
+""",
+"cef": GEN_CEF_FUNCS,
+"leef": r"""
+-- LEEF parser: LEEF:1.0|vendor|product|version|eventid|key=value<tab>key=value
+local function parseLeef(payload)
+    local at = string.find(payload, "LEEF:", 1, true)
+    if not at then return nil end
+    local rest = string.sub(payload, at + 5)
+    local names = { "leef_version", "device_vendor", "device_product", "device_version", "signature_id" }
+    local rec = {}
+    for i = 1, 5 do
+        local p = string.find(rest, "|", 1, true)
+        if not p then return nil end
+        rec[names[i]] = string.sub(rest, 1, p - 1)
+        rest = string.sub(rest, p + 1)
+    end
+    local delim = "\t"
+    if string.sub(rec.leef_version, 1, 1) == "2" then
+        local p = string.find(rest, "|", 1, true)
+        if p then
+            local head = string.sub(rest, 1, p - 1)
+            rest = string.sub(rest, p + 1)
+            if head ~= "" then delim = string.sub(head, 1, 1) end
+        end
+    end
+    local pos = 1
+    while pos <= string.len(rest) do
+        local nxt = string.find(rest, delim, pos, true)
+        local pair
+        if nxt then pair = string.sub(rest, pos, nxt - 1); pos = nxt + 1 else pair = string.sub(rest, pos); pos = string.len(rest) + 1 end
+        local k, v = string.match(pair, "^([^=]+)=(.*)$")
+        if k then rec[k] = v end
+    end
+    return rec
+end
+""",
+"kv": r"""
+-- key=value parser (logfmt style). Quoted values may contain spaces.
+local function parseKv(payload)
+    local rec = {}
+    local count = 0
+    for key, val in string.gmatch(payload, "([%w_%.%-]+)=\"([^\"]*)\"") do rec[key] = val; count = count + 1 end
+    local stripped = string.gsub(payload, "[%w_%.%-]+=\"[^\"]*\"", " ")
+    for key, val in string.gmatch(stripped, "([%w_%.%-]+)=(%S+)") do rec[key] = val; count = count + 1 end
+    if count < 2 then return nil end
+    return rec
+end
+""",
+}
+
+
+def build_parse_funcs(fmt):
+    parts = [LUA_PARSE["syslog"]]
+    if fmt == "json":
+        parts.insert(0, LUA_PARSE["json"])
+    else:
+        parts.append(LUA_PARSE[fmt])
+    disp = ["", "-- Detect the payload format and return a flat table of fields (or nil).", "local function parseLine(line)",
+            "    local payload, rec = stripSyslog(line)"]
+    if fmt == "cef":
+        disp += ['    local parsed = nil', '    if string.find(payload, "CEF:", 1, true) then parsed = parseCef(payload) end']
+    elif fmt == "leef":
+        disp += ['    local parsed = nil', '    if string.find(payload, "LEEF:", 1, true) then parsed = parseLeef(payload) end']
+    elif fmt == "kv":
+        disp += ['    local parsed = parseKv(payload)']
+    else:
+        disp += ['    local parsed = nil', '    if string.sub(string.gsub(payload, "^%s+", ""), 1, 1) == "{" then',
+                 '        local ok, d = pcall(json.decode, payload)', '        if ok and type(d) == "table" then parsed = d end', '    end']
+    disp += ["    if not parsed then return nil end",
+             "    for k, v in pairs(rec) do parsed[k] = v end",
+             "    return parsed", "end", ""]
+    return "".join(parts) + "\n".join(disp)
+
 
 GEN_TEMPLATE = r"""-- OCSF serializer GENERATED by Trickle from a sample record.
 -- Vendor: __VENDOR__   Class: __CLASS_NAME__ (__CLASS_UID__)
@@ -451,7 +762,17 @@ local TIME_FIELDS   = { __TIME_FIELDS__ }
 local SEVERITY_FIELD = __SEV_FIELD__
 local ACTION_FIELD   = __ACTION_FIELD__
 
-local SEVERITY = { info = 1, informational = 1, low = 2, medium = 3, high = 4, critical = 5, fatal = 6 }
+local SEVERITY = { info = 1, informational = 1, low = 2, medium = 3, high = 4, critical = 5, fatal = 6, ["very-high"] = 5, unknown = 0 }
+
+-- Numeric severities (CEF uses 0 to 10): 0 info, 1-3 low, 4-6 medium, 7-8 high, 9-10 critical.
+local function severityId(sev)
+    local n = tonumber(sev)
+    if n then
+        if n <= 0 then return 1 elseif n <= 3 then return 2 elseif n <= 6 then return 3 elseif n <= 8 then return 4 end
+        return 5
+    end
+    return SEVERITY[string.lower(tostring(sev or ""))] or 0
+end
 
 local function isEmpty(v)
     if v == nil or v == "" then return true end
@@ -491,11 +812,8 @@ local function setNestedField(obj, path, value)
     end
 end
 
--- ISO-8601 UTC to epoch milliseconds (no os.time, so no timezone surprises).
-local function isoToMs(ts)
-    local y, mo, d, h, mi, s = string.match(ts, "^(%d%d%d%d)-(%d%d)-(%d%d)[T ](%d%d):(%d%d):(%d%d)")
-    if not y then return nil end
-    local yy, mm, dd = tonumber(y), tonumber(mo), tonumber(d)
+-- Civil date and time (UTC) to epoch milliseconds, no os.time so no timezone surprises.
+local function civilMs(yy, mm, dd, h, mi, s)
     if mm <= 2 then yy = yy - 1 end
     local era = math.floor(yy / 400)
     local yoe = yy - era * 400
@@ -503,11 +821,25 @@ local function isoToMs(ts)
     local doy = math.floor((153 * mp + 2) / 5) + dd - 1
     local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
     local days = era * 146097 + doe - 719468
-    local secs = days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
+    return (days * 86400 + h * 3600 + mi * 60 + s) * 1000
+end
+
+local function isoToMs(ts)
+    local y, mo, d, h, mi, s = string.match(ts, "^(%d%d%d%d)-(%d%d)-(%d%d)[T ](%d%d):(%d%d):(%d%d)")
+    if not y then return nil end
+    local ms = civilMs(tonumber(y), tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s))
     local frac = string.match(ts, "^%d%d%d%d%-%d%d%-%d%d[T ]%d%d:%d%d:%d%d%.(%d+)")
-    local ms = 0
-    if frac then ms = tonumber(string.sub(frac .. "000", 1, 3)) end
-    return secs * 1000 + ms
+    if frac then ms = ms + tonumber(string.sub(frac .. "000", 1, 3)) end
+    return ms
+end
+
+local MONTHS = { jan = 1, feb = 2, mar = 3, apr = 4, may = 5, jun = 6, jul = 7, aug = 8, sep = 9, oct = 10, nov = 11, dec = 12 }
+
+-- Text dates such as Nov 04 2026 12:30:00 (common in CEF rt fields).
+local function textToMs(ts)
+    local mon, d, y, h, mi, s = string.match(ts, "^(%a%a%a)%a*%s+(%d+),?%s+(%d%d%d%d)%s+(%d+):(%d+):(%d+)")
+    if not mon or not MONTHS[string.lower(mon)] then return nil end
+    return civilMs(tonumber(y), MONTHS[string.lower(mon)], tonumber(d), tonumber(h), tonumber(mi), tonumber(s))
 end
 
 local function toEpochMs(v)
@@ -517,10 +849,11 @@ local function toEpochMs(v)
         if n < 100000000000 then n = n * 1000 end
         return n
     end
-    if type(v) == "string" then return isoToMs(v) end
+    if type(v) == "string" then return isoToMs(v) or textToMs(v) end
     return nil
 end
 
+__CEF_FUNCS__
 local function dispositionId(action)
     local a = string.lower(tostring(action or ""))
     if a == "allow" or a == "allowed" or a == "permit" then return 1
@@ -543,7 +876,7 @@ function processEvent(event)
     local e = event
     if type(event.message) == "table" then e = event.message end
     local r = {}
-
+__CEF_USE__
     local action = nil
     if ACTION_FIELD then action = e[ACTION_FIELD] end
     local act = activityId(action)
@@ -558,7 +891,7 @@ function processEvent(event)
 
     local sev = nil
     if SEVERITY_FIELD then sev = e[SEVERITY_FIELD] end
-    r.severity_id = SEVERITY[string.lower(tostring(sev or ""))] or 0
+    r.severity_id = severityId(sev)
     if not isEmpty(sev) then r.severity = tostring(sev) end
 
     if not isEmpty(action) then
@@ -571,6 +904,7 @@ function processEvent(event)
         if ms then r.time = ms; break end
     end
 
+__CEF_TIME__
     setNestedField(r, "metadata.version", OCSF_VERSION)
     setNestedField(r, "metadata.product.vendor_name", VENDOR_NAME)
     setNestedField(r, "metadata.product.name", PRODUCT_NAME)
@@ -633,6 +967,19 @@ GEN_MITRE_EXTRA = r"""
 
 def generate_serializer(text, vendor="", product="", version=""):
     recs = parse_records(text)
+    fmt = None
+    if recs and all(isinstance(r.get("message"), str) for r in recs):
+        det = [detect_log(r["message"]) for r in recs]
+        if all(d[0] for d in det):
+            fmt = det[0][0]
+            recs = [d[1] for d in det]
+        elif not any(d[0] for d in det) and all(set(r) <= {"message", "host", "source_type", "timestamp", "service"} for r in recs):
+            raise ApiError("Could not recognise the log format. Trickle can generate from JSON, CEF, LEEF, key=value "
+                           "lines, and syslog-wrapped versions of those. For other formats, parse the line into fields "
+                           "first (for example a Vector remap step), then generate from the parsed JSON.")
+    if fmt and not vendor.strip():
+        vendor = (recs[0].get("device_vendor") or "").strip()
+        product = (recs[0].get("device_product") or "").strip()
     keys = []
     for r in recs:
         for k in r:
@@ -656,11 +1003,13 @@ def generate_serializer(text, vendor="", product="", version=""):
     mitre_keys = [k for k in keys if "mitre" in _norm(k)]
 
     consumed = set(time_keys) | {k for k in (sev_key, act_key) if k} | set(mitre_keys)
+    if fmt:
+        consumed |= {k for k in keys if k in LOG_CONSUMED}
     maps, used_targets = [], set()
     for k in keys:
         if k in consumed:
             continue
-        hit = GEN_ALIASES.get(_norm(k))
+        hit = (LOG_ALIASES.get(_norm(k)) if fmt and fmt != "json" else None) or GEN_ALIASES.get(_norm(k))
         if hit and hit[0] not in used_targets:
             used_targets.add(hit[0])
             maps.append((k, hit[0], hit[1] == "n"))
@@ -704,7 +1053,15 @@ def generate_serializer(text, vendor="", product="", version=""):
     else:
         feature = "-- no event_type field found, so no feature name"
     uid = re.sub(r"[^a-z0-9]+", "_", product.lower()).strip("_") or "vendor"
-    for a, b in [("__FEATURE__", feature), ("__PRODUCT_UID__", q(uid)), ("__VERSION__", version), ("__VENDOR_Q__", q(vendor)), ("__PRODUCT_Q__", q(product)), ("__VENDOR__", re.sub(r"[^\x20-\x7e]", "", vendor)),
+    if fmt:
+        parse_use = ('    local envelope_ts = nil\n    if type(event.message) == "string" then\n        local parsed = parseLine(event.message)\n'
+                     '        if parsed then\n            e = parsed\n            r.raw_data = event.message\n            envelope_ts = event.timestamp\n        end\n    end')
+        parse_time = ('    -- last resort only: the envelope timestamp is ingest time, not event time\n'
+                      '    if not r.time and envelope_ts then\n        local ms2 = toEpochMs(envelope_ts)\n        if ms2 then r.time = ms2 end\n    end')
+        parse_funcs = build_parse_funcs(fmt)
+    else:
+        parse_use = parse_time = parse_funcs = ""
+    for a, b in [("__CEF_FUNCS__", parse_funcs), ("__CEF_USE__", parse_use), ("__CEF_TIME__", parse_time), ("__FEATURE__", feature), ("__PRODUCT_UID__", q(uid)), ("__VERSION__", version), ("__VENDOR_Q__", q(vendor)), ("__PRODUCT_Q__", q(product)), ("__VENDOR__", re.sub(r"[^\x20-\x7e]", "", vendor)),
                  ("__CLASS_NAME__", cname), ("__CLASS_UID__", str(cls)), ("__CAT_UID__", str(cat)),
                  ("__CAT_NAME__", catname), ("__ACTIVITY__", str(activity)),
                  ("__MAP__", "\n".join(map_lines)), ("__CONSUMED__", "\n".join(cons_lines)),
@@ -714,7 +1071,7 @@ def generate_serializer(text, vendor="", product="", version=""):
                  ("__EXTRA__", extra)]:
         code = code.replace(a, b)
     unmapped = [k for k in keys if k not in mapped_names and k not in consumed]
-    return {"code": code, "class_name": cname, "class_uid": cls,
+    return {"code": code, "class_name": cname, "class_uid": cls, "format": FORMAT_NAMES.get(fmt, "JSON") if fmt else "JSON",
             "mapped": [{"source": m[0], "target": m[1]} for m in maps],
             "handled": sorted(consumed), "unmapped": unmapped}
 
