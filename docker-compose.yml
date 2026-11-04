@@ -1,12 +1,12 @@
 # Start:  docker compose up -d --build     Stop:  docker compose down
 # Then open http://127.0.0.1:8790
 services:
-  pipeline-lab:
+  trickle:
     build:
       context: .
       target: app
-    image: pipeline-lab:latest
-    container_name: pipeline-lab
+    image: trickle:latest
+    container_name: trickle
     restart: unless-stopped
     ports:
       # Published on this machine only. Do not change 127.0.0.1 to 0.0.0.0:
@@ -23,7 +23,7 @@ services:
     build:
       context: .
       target: test
-    image: pipeline-lab-tests:latest
+    image: trickle-tests:latest
     working_dir: /app
     volumes:
       - ./spec:/app/spec:ro

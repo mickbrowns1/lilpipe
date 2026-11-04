@@ -341,7 +341,7 @@ const REMAP_PRESETS = [
 function newTransform(type){
   switch(type){
     case "filter": return {type, condition: '!contains(string(.message) ?? "", "debug")'};
-    case "remap":  return {type, source: '.processed_by = "pipeline-lab"'};
+    case "remap":  return {type, source: '.processed_by = "trickle"'};
     case "sample": return {type, n: 10};
     case "dedupe": return {type, fields: "message"};
     case "lua":    return {type, path: "", code: STARTER_LUA};
