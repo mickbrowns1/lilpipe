@@ -987,6 +987,7 @@ __CEF_TIME__
     if CLASS_UID == 2004 then setNestedField(r, "finding_info.product_uid", PRODUCT_UID) end
 
     local mapped = {}
+    local mappedVals = {}
     for _, m in ipairs(MAP) do
         mapped[m.source] = true
         local v = getPath(e, m.source)
@@ -994,6 +995,7 @@ __CEF_TIME__
             if m.number then v = tonumber(v) or v end
             if m.time then v = toEpochMs(v) or v end
             setNestedField(r, m.target, v)
+            if type(v) == "string" and string.len(v) >= 4 then mappedVals[v] = true end
         end
     end
 __EXTRA__
@@ -1015,7 +1017,8 @@ __EXTRA__
     local function copyUnmapped(src, prefix)
         for k, v in pairs(src) do
             local path = prefix .. tostring(k)
-            if not mapped[path] and not CONSUMED[path] and not isEmpty(v) then
+            local dup = type(v) == "string" and string.len(v) >= 4 and mappedVals[v]
+            if not mapped[path] and not CONSUMED[path] and not isEmpty(v) and not dup then
                 if type(v) == "table" and #v == 0 then
                     copyUnmapped(v, path .. ".")
                 else
