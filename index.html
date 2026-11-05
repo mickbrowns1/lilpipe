@@ -134,6 +134,7 @@ header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20p
 .setrow{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer}
 .setrow input{margin-top:4px}
 .cov{font-size:13px;line-height:1.7;margin:2px 0}
+.cov .rec{margin-left:26px;font-size:12.5px;color:var(--text)}
 .modal h3{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin:20px 0 6px}
 .modal details{border:1px solid var(--line);border-radius:9px;margin:6px 0;background:var(--panel)}
 .modal summary{cursor:pointer;padding:9px 12px;font-weight:600}
@@ -613,7 +614,10 @@ function coverageHTML(){
       if(miss.length){
         h += '<div class="hint" style="margin:4px 0">A field can be legitimately absent for some event types. Check the rule&rsquo;s event type before treating it as a defect. Presence is counted over the ' + c.records + ' record(s) in this run.</div>'
           + '<div class="cov">' + miss.map((f) => '<div><b class="fail">MISSING</b> <code>' + esc(f.field) + '</code> <span class="muted">used by ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
-          + ' (e.g. ' + esc(f.rule_names.slice(0, 2).join("; ")) + ')</span></div>').join("") + '</div>';
+          + ' (e.g. ' + esc(f.rule_names.slice(0, 2).join("; ")) + ')</span>'
+          + (f.suggestions && f.suggestions.length ? f.suggestions.map((s) => '<div class="rec">&rarr; possible source <code>' + esc(s.source) + '</code> = &ldquo;' + esc(s.example) + '&rdquo; <span class="muted">(' + esc(s.why)
+              + (s.currently ? "; today it only appears as " + esc(s.currently) : "") + ')</span></div>').join("") : "")
+          + '</div>').join("") + '</div><div class="hint">Recommendations only. Nothing in the Lua was changed. They come from matching your rules&rsquo; values against the fields in this run, so more event types in the sample give better suggestions.</div>';
       }
       if(ok.length){
         h += '<details style="margin:4px 0"><summary class="muted">Present fields (' + ok.length + ')</summary><div class="cov">' + ok.map((f) => '<div><b class="pass">OK</b> <code>' + esc(f.field)

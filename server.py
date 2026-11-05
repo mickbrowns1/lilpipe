@@ -1856,7 +1856,7 @@ def run_pipeline(p):
                 return {"ok": False, "stage": "serializer", "error": ser.get("fatal") or "Serializer failed.",
                         "lint": ser.get("lint", []), "log": res.get("log", [])}
             outputs = ser.pop("outputs")
-            res["coverage"] = detection_coverage(outputs)
+            res["coverage"] = detection_coverage(outputs, events)
             lines = [json.dumps(o) for o in outputs]
             res["stages"].append({"id": "serializer", "label": "lua serializer", "kind": "transform",
                                   "events": len(lines), "bytes": sum(len(l) + 1 for l in lines),
@@ -1975,6 +1975,10 @@ def load_detection_index(path):
                     k = p.get("key")
                     if k and k != "dataSource.name":
                         ent["fields"].setdefault(k, {})[rid] = rname
+                        vs = p.get("value")
+                        for v in (vs if isinstance(vs, list) else [vs]):
+                            if isinstance(v, str) and v and v != ":anycase" and p.get("op") in ("=", "in", "contains"):
+                                ent.setdefault("values", {}).setdefault(k, {}).setdefault(p["op"], set()).add(v)
     _DET_CACHE.clear()
     _DET_CACHE[key] = idx
     return idx
@@ -2013,7 +2017,61 @@ def _present_paths(obj, prefix="", acc=None):
     return acc
 
 
-def detection_coverage(outputs):
+
+def _leaves(obj, prefix="", acc=None):
+    acc = {} if acc is None else acc
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            p = prefix + str(k)
+            if isinstance(v, dict):
+                _leaves(v, p + ".", acc)
+            elif isinstance(v, (str, int, float)) and not isinstance(v, bool) and str(v) != "":
+                acc.setdefault(p, []).append(str(v))
+    return acc
+
+
+def recommend_sources(field, ent, inputs, outputs):
+    """Suggest which source field could feed a missing detection field. Never changes anything."""
+    ops = (ent.get("values") or {}).get(field) or {}
+    exact = {v.lower() for op in ("=", "in") for v in ops.get(op, ())}
+    contains = [v.lower() for v in ops.get("contains", ()) if len(v) >= 3]
+    last = _norm(field.split(".")[-1])
+    cands = {}
+    for label, recs in (("input", inputs), ("output", outputs)):
+        for r in recs or []:
+            for path, vals in _leaves(r if label == "input" else (r.get("unmapped") or {}), "" if label == "input" else "unmapped.").items():
+                for v in vals:
+                    lv = v.lower()
+                    hit = lv in exact or any(c in lv for c in contains)
+                    name_hit = _norm(path.split(".")[-1]) == last
+                    if hit or name_hit:
+                        c = cands.setdefault(path, {"source": path, "example": v[:60], "value_match": 0, "name_match": name_hit,
+                                                    "records": 0, "where": label})
+                        c["value_match"] += 1 if hit else 0
+                        c["records"] += 1
+    for p in [p for p in cands if p.startswith("unmapped.") and p[len("unmapped."):] in cands]:
+        cands.pop(p)      # same value already offered under its raw name
+    ranked = sorted(cands.values(), key=lambda c: (-c["value_match"], not c["name_match"], c["where"] != "input", c["source"]))
+    out = []
+    for c in ranked[:3]:
+        if c["value_match"] and c["name_match"]:
+            why = "same name, and its value is one the rules look for"
+        elif c["value_match"]:
+            why = "its value is one the rules look for"
+        else:
+            why = "same name as the detection field"
+        item = {"source": c["source"], "example": c["example"], "why": why, "where": c["where"]}
+        if c["where"] == "input":     # is the value already carried somewhere in the output?
+            for o in outputs or []:
+                um = (o.get("unmapped") or {}) if isinstance(o, dict) else {}
+                if c["source"] in um:
+                    item["currently"] = "unmapped." + c["source"]
+                    break
+        out.append(item)
+    return out
+
+
+def detection_coverage(outputs, inputs=None):
     """None when the feature is off, the file is missing, or nothing matches. Otherwise a report per dataSource.name."""
     if not load_settings().get("detection_coverage"):
         return None
@@ -2044,6 +2102,8 @@ def detection_coverage(outputs):
             fields.append({"field": fname, "rules": len(rules), "present": present, "total": len(recs),
                            "status": "present" if present else "missing",
                            "rule_names": sorted(set(rules.values()))[:5]})
+            if not present:
+                fields[-1]["suggestions"] = recommend_sources(fname, hit, inputs, recs)
         fields.sort(key=lambda f: (f["status"] != "missing", -f["rules"], f["field"]))
         missing = [f for f in fields if f["status"] == "missing"]
         sources.append({"state": "match", "name": hit["name"], "records": len(recs), "rules": len(hit["rules"]),
