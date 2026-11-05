@@ -184,6 +184,14 @@ header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20p
   </div>
 </div>
 
+<div class="modal" id="newModal" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="newTitle" style="width:min(460px,100%)">
+    <div class="phead"><h2 id="newTitle">Save this pipeline first?</h2><button class="x" data-action="newCancel" aria-label="Close">&times;</button></div>
+    <div class="pbody"><p style="margin-top:0">You have changes that are not saved. Starting a new pipeline clears the source, the Lua and the results.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" data-action="newSave">Save and start new</button> <button class="btn" data-action="newDiscard">Discard and start new</button> <button class="btn" data-action="newCancel">Cancel</button></div></div>
+  </div>
+</div>
+
 <div class="modal" id="helpModal" hidden>
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
     <div class="phead"><h2 id="helpTitle">How to use Trickle</h2><button class="x" data-action="helpClose" aria-label="Close help">&times;</button></div>
@@ -398,6 +406,13 @@ function defaultPipeline(){
   };
 }
 let pipe = defaultPipeline();
+const snap = () => { const p = JSON.parse(JSON.stringify(pipe)); p.name = ""; return JSON.stringify(p); };
+let savedSnap = snap();
+const isDirty = () => snap() !== savedSnap;
+function startNew(){
+  pipe = defaultPipeline(); pipe.source.text = ""; sel = "source"; last = null; tab = "events"; banner("", "");
+  $("pname").value = ""; savedSnap = snap(); renderAll();
+}
 let sel = "source";            // "source" | "sink" | integer index of transform
 let LUALIB = [];              // saved Lua serializers (pipelines + data folder)
 async function loadLua(){ try { LUALIB = await api("/api/lua"); } catch(e){ LUALIB = []; } }
@@ -953,14 +968,14 @@ async function doSave(){
   const name = $("pname").value.trim();
   if(!name){ banner("warn", "Give the pipeline a name first."); return false; }
   pipe.name = name;
-  try { await api("/api/pipelines/" + encodeURIComponent(name), {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(pipe)}); banner("ok", "Saved <b>" + esc(name) + "</b>."); await loadSaved(); await loadLua(); renderAll(); return true; }
+  try { await api("/api/pipelines/" + encodeURIComponent(name), {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(pipe)}); banner("ok", "Saved <b>" + esc(name) + "</b>."); savedSnap = snap(); await loadSaved(); await loadLua(); renderAll(); return true; }
   catch(e){ banner("err", esc(e.message)); return false; }
 }
 async function doLoad(name){
   try {
     const p = await api("/api/pipelines/" + encodeURIComponent(name));
     pipe = p; if(!pipe.transforms) pipe.transforms = [];
-    sel = "source"; last = null; tab = "events"; banner("", ""); renderAll(); $("pname").value = name;
+    sel = "source"; last = null; tab = "events"; banner("", ""); renderAll(); $("pname").value = name; savedSnap = snap();
   } catch(e){ banner("err", esc(e.message)); }
 }
 function copy(text){ try { navigator.clipboard.writeText(text); banner("ok", "Copied."); } catch(e){ banner("warn", "Copy failed. Select the text and copy it manually."); } }
@@ -1035,10 +1050,10 @@ document.addEventListener("click", async (ev) => {
   else if(a === "config"){ doConfig(); }
   else if(a === "save"){ doSave(); }
   else if(a === "clearSource"){ const s = pipe.source; if("text" in s) s.text = ""; if("body" in s) s.body = ""; last = null; renderAll(); }
-  else if(a === "newPipe"){
-    pipe = defaultPipeline(); pipe.source.text = ""; sel = "source"; last = null; tab = "events"; banner("", "");
-    $("pname").value = ""; renderAll();
-  }
+  else if(a === "newPipe"){ if(isDirty()) $("newModal").hidden = false; else startNew(); }
+  else if(a === "newSave"){ $("newModal").hidden = true; if(await doSave()) startNew(); }
+  else if(a === "newDiscard"){ $("newModal").hidden = true; startNew(); }
+  else if(a === "newCancel"){ $("newModal").hidden = true; }
   else if(a === "saveRun"){ if(await doSave()) doRun(); }
   else if(a === "load"){ doLoad(el.dataset.name); }
   else if(a === "deleteSaved"){
@@ -1104,10 +1119,10 @@ document.addEventListener("change", async (ev) => {
 });
 $("pname").addEventListener("input", () => { pipe.name = $("pname").value; });
 document.addEventListener("keydown", (ev) => {
-  if(ev.key === "Escape"){ pendingLua = null; ["helpModal", "settingsModal", "diffModal"].forEach((id) => { $(id).hidden = true; }); return; }
+  if(ev.key === "Escape"){ pendingLua = null; ["helpModal", "settingsModal", "diffModal", "newModal"].forEach((id) => { $(id).hidden = true; }); return; }
   const mod = ev.metaKey || ev.ctrlKey;
   if(!mod) return;
-  const open = ["helpModal", "settingsModal", "diffModal"].some((id) => !$(id).hidden);
+  const open = ["helpModal", "settingsModal", "diffModal", "newModal"].some((id) => !$(id).hidden);
   if(ev.key === "Enter" && !open){ ev.preventDefault(); if(!$("runBtn").disabled) doRun(); }
   else if((ev.key === "s" || ev.key === "S") && !open){ ev.preventDefault(); doSave(); }
 });
