@@ -10,7 +10,7 @@
   --bg:#f5f6f8; --panel:#ffffff; --panel2:#f0f2f5; --text:#1b1f27; --muted:#667085; --line:#dde1e7; --water:#0a8fd6;
   --accent:#0f766e; --accent-ink:#ffffff; --src:#2563eb; --xf:#7c3aed; --dst:#15803d;
   --warn:#b45309; --warn-bg:#fef3c7; --err:#b42318; --err-bg:#fee4e2; --ok-bg:#dcfce7;
-  --code:#f6f8fa; --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
+  --code:#f6f8fa; --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08); --depth:#0a3d62;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark){
@@ -18,20 +18,21 @@
     --bg:#0f1318; --panel:#171c23; --panel2:#1e242d; --text:#e6e9ee; --muted:#9aa4b2; --line:#2b323d; --water:#4cc3ff;
     --accent:#2dd4bf; --accent-ink:#06201d; --src:#60a5fa; --xf:#a78bfa; --dst:#4ade80;
     --warn:#fbbf24; --warn-bg:#3a2e0c; --err:#fda29b; --err-bg:#3b1512; --ok-bg:#12301c;
-    --code:#10151b; --shadow:none; color-scheme: dark;
+    --code:#10151b; --shadow:none; --depth:#e6f8ff; color-scheme: dark;
   }
 }
 :root[data-theme="dark"]{
     --bg:#0f1318; --panel:#171c23; --panel2:#1e242d; --text:#e6e9ee; --muted:#9aa4b2; --line:#2b323d; --water:#4cc3ff;
     --accent:#2dd4bf; --accent-ink:#06201d; --src:#60a5fa; --xf:#a78bfa; --dst:#4ade80;
     --warn:#fbbf24; --warn-bg:#3a2e0c; --err:#fda29b; --err-bg:#3b1512; --ok-bg:#12301c;
-    --code:#10151b; --shadow:none; color-scheme: dark;
+    --code:#10151b; --shadow:none; --depth:#e6f8ff; color-scheme: dark;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 button,input,select,textarea{font:inherit;color:inherit}
 header{display:flex;align-items:center;gap:16px;padding:22px 24px;min-height:108px;box-sizing:border-box;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.drop{position:absolute;left:.5px;top:3px;width:8px;height:8px;background:var(--water);border-radius:0 50% 50% 50%;transform:rotate(45deg)}
 header h1{font-size:34px;margin:0;font-weight:700;letter-spacing:.3px;line-height:1.05;color:var(--water)}
 .brand{display:flex;flex-direction:column;gap:4px}
 .brand .tag{font-size:16px;color:var(--water);opacity:.8;line-height:1.1;letter-spacing:.2px}
@@ -158,7 +159,7 @@ header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20p
 </head>
 <body>
 <header>
-  <div class="brand"><h1>Trickle</h1><div class="tag">&hellip; it's only half a pipeline</div></div>
+  <div class="brand"><h1 aria-label="Trickle"><span aria-hidden="true"><span style="color:color-mix(in srgb,var(--water),var(--depth) 0%)">T</span><span style="color:color-mix(in srgb,var(--water),var(--depth) 13%)">r</span><span style="position:relative;display:inline-block;color:color-mix(in srgb,var(--water),var(--depth) 26%)">ı<i class="drop"></i></span><span style="color:color-mix(in srgb,var(--water),var(--depth) 39%)">c</span><span style="color:color-mix(in srgb,var(--water),var(--depth) 52%)">k</span><span style="color:color-mix(in srgb,var(--water),var(--depth) 65%)">l</span><span style="color:color-mix(in srgb,var(--water),var(--depth) 78%)">e</span></span></h1><div class="tag">&hellip; it's only half a pipeline</div></div>
   <span class="sub" id="vecInfo">checking Vector&hellip;</span>
   <span class="sp"></span>
   <button class="btn" data-action="config">View config</button>
