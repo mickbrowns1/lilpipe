@@ -630,7 +630,8 @@ function coverageHTML(){
           + '<div class="cov">' + miss.map((f) => '<div>' + fixBtn(f, fixables(f).length === 1 ? fixables(f)[0] : null) + '<b class="fail">MISSING</b> <code>' + esc(f.field) + '</code> <span class="muted">used by ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
           + ' (e.g. ' + esc(f.rule_names.slice(0, 2).join("; ")) + ')</span>'
           + expectHTML(f)
-          + (f.suggestions && f.suggestions.length ? f.suggestions.map((s) => '<div class="rec">' + (fixables(f).length > 1 && s.fixable ? fixBtn(f, s, true) : "") + '&rarr; possible source <code>' + esc(s.source) + '</code> = &ldquo;' + esc(s.example) + '&rdquo; <span class="muted">(' + esc(s.why)
+          + (f.suggestions && f.suggestions.length ? f.suggestions.map((s) => '<div class="rec">' + (fixables(f).length > 1 && s.fixable ? fixBtn(f, s, true) : "") + '&rarr; ' + (s.fixable ? 'seen in' : 'possible source') + ' <code>' + esc(s.source) + '</code> = &ldquo;' + esc(s.example) + '&rdquo; <span class="muted">(' + (s.fixable ? 'matches rule value ' + (s.matched || []).map((m) => '<code>' + esc(m.length > 40 ? m.slice(0, 37) + "..." : m) + '</code>').join(", ") : esc(s.why))
+              + "; seen in " + s.seen + " of " + s.total + " record" + (s.total > 1 ? "s" : "") + (s.name_match ? "; field name also matches" : "") + (s.examples && s.examples.length > 1 ? "; values: " + s.examples.map((x) => esc(x)).join(", ") : "")
               + (s.currently ? "; today it only appears as " + esc(s.currently) : "") + ')</span></div>').join("") : "")
           + '</div>').join("") + '</div><div class="hint">Nothing in the Lua changes unless you press Fix. They come from matching your rules&rsquo; values against the fields in this run, so more event types in the sample give better suggestions.</div>';
       }

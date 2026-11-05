@@ -2040,11 +2040,23 @@ def expected_values(field, ent, cap=12):
     return out
 
 
+def label_in(c, inputs, outputs):
+    return c["where"] == "input"
+
+
 def recommend_sources(field, ent, inputs, outputs):
     """Suggest which source field could feed a missing detection field. Never changes anything."""
     ops = (ent.get("values") or {}).get(field) or {}
     exact = {v.lower() for op in ("=", "in") for v in ops.get(op, ())}
     contains = [v.lower() for v in ops.get("contains", ()) if len(v) >= 3]
+    rx = []
+    for pat in sorted(ops.get("matches", ()))[:40]:
+        if len(pat) <= 200:
+            try:
+                rx.append((pat, re.compile(pat, re.I)))
+            except re.error:
+                pass
+    orig = {v.lower(): v for vs in ops.values() for v in vs}
     last = _norm(field.split(".")[-1])
     cands = {}
     for label, recs in (("input", inputs), ("output", outputs)):
@@ -2052,11 +2064,20 @@ def recommend_sources(field, ent, inputs, outputs):
             for path, vals in _leaves(r if label == "input" else (r.get("unmapped") or {}), "" if label == "input" else "unmapped.").items():
                 for v in vals:
                     lv = v.lower()
-                    hit = lv in exact or any(c in lv for c in contains)
+                    why_hit = ([lv] if lv in exact else []) + [c for c in contains if c in lv]
+                    if len(v) <= 300:
+                        why_hit += [pat for pat, rc in rx if rc.search(v)]
+                    hit = bool(why_hit)
                     name_hit = _norm(path.split(".")[-1]) == last
                     if hit or name_hit:
                         c = cands.setdefault(path, {"source": path, "example": v[:60], "value_match": 0, "name_match": name_hit,
-                                                    "records": 0, "where": label})
+                                                    "records": 0, "where": label, "matched": []})
+                        for w in why_hit:
+                            w = orig.get(w, w)
+                            if w not in c["matched"]:
+                                c["matched"].append(w)
+                        if hit and v[:60] not in c.setdefault("examples", []) and len(c["examples"]) < 4:
+                            c["examples"].append(v[:60])
                         c["value_match"] += 1 if hit else 0
                         c["records"] += 1
     for p in [p for p in cands if p.startswith("unmapped.") and p[len("unmapped."):] in cands]:
@@ -2071,7 +2092,9 @@ def recommend_sources(field, ent, inputs, outputs):
         else:
             why = "same name as the detection field"
         item = {"source": c["source"], "example": c["example"], "why": why, "where": c["where"],
-                "fixable": bool(c["value_match"]),
+                "fixable": bool(c["value_match"]), "matched": c["matched"][:3], "examples": c.get("examples", [])[:4],
+                "seen": c["records"], "total": len(inputs if label_in(c, inputs, outputs) else outputs or []) or 1,
+                "name_match": c["name_match"],
                 "fix_source": c["source"][len("unmapped."):] if c["source"].startswith("unmapped.") else c["source"]}
         if c["where"] == "input":     # is the value already carried somewhere in the output?
             for o in outputs or []:
