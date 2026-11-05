@@ -523,6 +523,40 @@ function field(label, inner, hint, action){
   return head + inner + (hint ? '<div class="hint">' + hint + '</div>' : "");
 }
 const clearBtn = (a, i) => '<button class="btn small" data-action="' + a + '"' + (i === undefined ? "" : ' data-i="' + i + '"') + ' title="Clear this box">Clear</button>';
+const FMT_OPTS = [["auto","Auto Detect"],["json","JSON in a message"],["cef","CEF"],["leef","LEEF"],["kv","key=value"],["panos","Palo Alto PAN-OS (CSV)"],["xml","XML events"],["apache","Apache / Nginx access"],["table","CSV / TSV with header row"],["w3c","W3C / Zeek header log"],["grok","Custom pattern (grok)"]];
+const fmtInfo = {}, fmtTimers = {};
+function fmtObj(key){ return key === "main" ? pipe.source : (pipe.source.types || [])[Number(key)]; }
+function fmtVal(key){ const o = fmtObj(key) || {}; return key === "main" ? {fmt: o.rfmt || "auto", pat: o.rpat || ""} : {fmt: o.format || "auto", pat: o.pattern || ""}; }
+function fmtBadgeHTML(key){
+  const i = fmtInfo[key];
+  if(!i) return '<span class="muted">Paste in a record to test if Trickle can Auto Detect the format.</span>';
+  if(!i.format) return '<span class="pill miss">Not recognised</span><span class="muted">' + esc(i.message || "") + '</span>';
+  const guess = i.conf === "low" && (fmtVal(key).fmt === "auto");
+  return '<span class="pill ' + (guess ? "exp" : "ok") + '">' + (guess ? "Best guess" : fmtVal(key).fmt === "auto" ? "Detected" : "Format") + '</span><b>' + esc(i.label) + '</b><span class="muted"> &middot; ' + i.fields + ' field' + (i.fields === 1 ? "" : "s") + ', ' + i.records + ' record' + (i.records === 1 ? "" : "s") + (guess ? ". Not sure? Pick the format on the right." : "") + (i.tip ? " " + esc(i.tip) : "") + '</span>';
+}
+function fmtRow(key){
+  const v = fmtVal(key);
+  return '<div class="fmtrow" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 2px">'
+    + '<div id="fb-' + key + '" style="flex:1;min-width:180px;font-size:12px">' + fmtBadgeHTML(key) + '</div>'
+    + '<select data-fmtsel="' + key + '" title="Override the detected format" style="max-width:190px">' + FMT_OPTS.map((o) => opt(o[0], o[1], v.fmt)).join("") + '</select></div>'
+    + (v.fmt === "grok" ? '<input type="text" data-fmtpat="' + key + '" spellcheck="false" placeholder="%{IP:client} %{WORD:method} %{GREEDYDATA:rest}" value="' + esc(v.pat) + '" style="width:100%;margin-top:4px">'
+      + '<div class="hint">Types: INT NUMBER WORD NOTSPACE DATA GREEDYDATA IP TIMESTAMP_ISO8601 HTTPDATE QUOTED. Write %{TYPE:field} and plain text between them.</div>' : "");
+}
+function detectFmt(key, delay){
+  clearTimeout(fmtTimers[key]);
+  fmtTimers[key] = setTimeout(async () => {
+    const o = fmtObj(key); if(!o) return;
+    const v = fmtVal(key);
+    if(!String(o.text || "").trim()){ delete fmtInfo[key]; const b = $("fb-" + key); if(b) b.innerHTML = fmtBadgeHTML(key); return; }
+    try { fmtInfo[key] = await postJSON("/api/detect", {text: o.text, format: v.fmt, pattern: v.pat}); }
+    catch(e){ fmtInfo[key] = {format: null, message: e.message}; }
+    const b = $("fb-" + key); if(b) b.innerHTML = fmtBadgeHTML(key);
+  }, delay || 0);
+}
+function detectAllFmt(){
+  if(sel !== "source" || pipe.source.type !== "record") return;
+  if(pipe.source.multi) (pipe.source.types || []).forEach((t, i) => detectFmt(String(i), 0)); else detectFmt("main", 0);
+}
 function renderInspector(){
   const box = $("insp");
   let h = "";
@@ -537,14 +571,15 @@ function renderInspector(){
       (s.types || []).forEach((t, i) => {
         h += '<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0">'
           + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b class="muted" style="white-space:nowrap">Type ' + (i + 1) + '</b><input type="text" data-ti="' + i + '" data-tk="name" placeholder="Name, e.g. HTTP requests" value="' + esc(t.name) + '" style="flex:1;min-width:0">' + clearBtn("clearType", i) + '</div>'
-          + '<textarea data-ti="' + i + '" data-tk="text" spellcheck="false" placeholder="Paste one or more events of this type" style="min-height:120px">' + esc(t.text) + '</textarea>'
+          + '<textarea data-ti="' + i + '" data-tk="text" spellcheck="false" placeholder="Paste in a record to test if Trickle can Auto Detect the format" style="min-height:120px">' + esc(t.text) + '</textarea>'
+          + fmtRow(String(i))
           + '</div>';
       });
       h += '<div style="margin:6px 0 10px"><button class="btn small" data-action="addType">Add another type</button></div>'
-        + '<div class="hint">Each box is one log type. Run sends all of them as one stream. Generate builds one serializer with a section per type and picks the closest one for each event by its field names. JSON events only for now.</div>';
+        + '<div class="hint">Each box is one log type. Run sends all of them as one stream. Generate builds one serializer with a section per type. JSON events are matched by field names, text logs like Palo Alto by their type column.</div>';
     } else if(s.type === "record"){
-      h += field("Raw record(s) as JSON", '<textarea data-k="text" spellcheck="false" style="min-height:260px">' + esc(s.text) + '</textarea>',
-        "One JSON object, an array, or one object per line. This is exactly what a collector would hand to the serializer. With only a Lua serializer after it, Vector is not used at all.", clearBtn("clearSource"));
+      h += field("Raw record(s)", '<textarea data-k="text" spellcheck="false" placeholder="Paste in a record to test if Trickle can Auto Detect the format" style="min-height:260px">' + esc(s.text) + '</textarea>' + fmtRow("main"),
+        "JSON, CEF, LEEF, key=value, Palo Alto PAN-OS CSV, XML, Apache/Nginx, or CSV/TSV/W3C with the header row first. This is what a collector would hand to the serializer. With only a Lua serializer after it, Vector is not used at all.", clearBtn("clearSource"));
     } else if(s.type === "generator"){
       h += field("Format", '<select data-k="format" data-struct="1">' + ["syslog","json","apache_common","apache_error","bsd_syslog","shuffle"].map((f) => opt(f,f,s.format)).join("") + '</select>');
       h += field("Number of events", '<input type="number" data-k="count" min="1" max="5000000" value="' + esc(s.count) + '">', "Vector generates these as fast as it can.");
@@ -873,6 +908,8 @@ async function loadSaved(){
     : '<div class="empty">Nothing saved yet. Name this pipeline and press Save.</div>';
 }
 
+const _renderInspector = renderInspector;
+renderInspector = function(){ _renderInspector(); detectAllFmt(); };
 function renderAll(){ applySettings(); renderFlow(); renderInspector(); renderResults(); $("pname").value = pipe.name || $("pname").value; }
 
 
@@ -1035,7 +1072,7 @@ document.addEventListener("click", async (ev) => {
     if(!text || !String(text).trim()){ banner("err", "Generate needs a sample record. Set the Source to <b>Raw record(s)</b> and paste an event first."); return; }
     const t = pipe.transforms[sel];
     try {
-      const g = await postJSON("/api/generate", {text: text, types: multi ? src.types : undefined, vendor: t.vendor || "", product: t.product || "", version: t.ocsf || ""});
+      const g = await postJSON("/api/generate", {text: text, types: multi ? src.types : undefined, vendor: t.vendor || "", product: t.product || "", version: t.ocsf || "", format: src.rfmt || "auto", pattern: src.rpat || ""});
       t.code = g.code; t.path = ""; last = null; renderAll();
       banner("ok", "Read the sample as <b>" + esc(g.format) + "</b> (vendor <b>" + esc(g.vendor) + "</b>, product <b>" + esc(g.product) + "</b>). Generated a <b>" + esc(g.class_name) + "</b> (" + g.class_uid + ") serializer: " + g.mapped.length + " fields mapped, "
         + g.handled.length + " handled (time, severity, action, MITRE), " + g.unmapped.length + " kept under <code>unmapped</code>"
@@ -1121,7 +1158,8 @@ document.addEventListener("click", async (ev) => {
 function target(){ return sel === "source" ? pipe.source : sel === "sink" ? pipe.sink : pipe.transforms[sel]; }
 document.addEventListener("input", (ev) => {
   const el = ev.target;
-  if(el.dataset.ti !== undefined){ const t = pipe.source.types[Number(el.dataset.ti)]; if(t) t[el.dataset.tk] = el.value; return; }
+  if(el.dataset.fmtpat !== undefined){ const k = el.dataset.fmtpat, o = fmtObj(k); if(o){ if(k === "main") o.rpat = el.value; else o.pattern = el.value; detectFmt(k, 400); } return; }
+  if(el.dataset.ti !== undefined){ const t = pipe.source.types[Number(el.dataset.ti)]; if(t) t[el.dataset.tk] = el.value; if(el.dataset.tk === "text") detectFmt(el.dataset.ti, 400); return; }
   if(el.dataset.k){
     const t = target();
     if(el.dataset.k === "type" && el.dataset.struct){ return; }
@@ -1129,10 +1167,16 @@ document.addEventListener("input", (ev) => {
     if(el.type === "number") v = v === "" ? "" : Number(v);
     t[el.dataset.k] = v;
     renderFlow();
+    if(el.dataset.k === "text" && sel === "source" && pipe.source.type === "record") detectFmt("main", 400);
   }
 });
 document.addEventListener("change", async (ev) => {
   const el = ev.target;
+  if(el.dataset.fmtsel !== undefined){
+    const k = el.dataset.fmtsel, o = fmtObj(k);
+    if(o){ if(k === "main") o.rfmt = el.value; else o.format = el.value; renderInspector(); detectFmt(k, 0); }
+    return;
+  }
   if(el.dataset.multi){
     const s = pipe.source;
     s.multi = el.checked;

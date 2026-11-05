@@ -37,6 +37,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
 
+import formats as fm
+
 HERE = Path(__file__).resolve().parent
 PIPE_DIR = HERE / "pipelines"
 OUT_DIR = HERE / "output"
@@ -348,7 +350,7 @@ def build_config(p, run_dir, http_port=8686):
 # Raw records and Lua helpers
 # ---------------------------------------------------------------------------
 
-def parse_records(text):
+def parse_records(text, keep_header=False):
     text = (text or "").strip()
     if not text:
         raise ApiError("The raw record source is empty. Paste one JSON event, a JSON array, or one JSON object per line.")
@@ -367,6 +369,10 @@ def parse_records(text):
                     raise ApiError("Line %d looks like JSON but is not valid JSON (check commas and quotes)." % n)
                 recs.append({"message": line.strip()})   # a text log line (CEF, LEEF, key=value, syslog) arrives as a message
 
+    if not keep_header and recs and all(set(r) == {"message"} and isinstance(r["message"], str) for r in recs):
+        found = sniff([r["message"] for r in recs])
+        if found and found["skip"]:
+            recs = [r for i, r in enumerate(recs) if i not in found["skip"]]   # header rows are not events
     if not recs:
         raise ApiError("No records found in the raw record source.")
     if len(recs) > MAX_RECORDS:
@@ -457,10 +463,13 @@ _alias("alertname", "finding_info.title")
 _alias("alerttype", "finding_info.types[0]")
 _alias("alertinfosubject", "message")
 _alias("alertinfodescription", "finding_info.desc")
+_alias("referer referrer", "http_request.referrer")
+_alias("status", "http_response.code", "n")
+_alias("protocol", "http_request.version")
 _alias("starttime", "start_time", "t")
 _alias("endtime", "end_time", "t")
 
-GEN_TIME_KEYS = ["time", "timestamp", "eventtimestamp", "eventtime", "ts", "datetime", "createdat", "date", "rt", "end", "start", "devtime", "syslogtime"]
+GEN_TIME_KEYS = ["time", "timegenerated", "receivetime", "timestamp", "eventtimestamp", "eventtime", "ts", "datetime", "createdat", "date", "rt", "end", "start", "devtime", "syslogtime"]
 GEN_SEV_KEYS = ["risklevel", "severity", "sev", "risk", "level", "priority"]
 GEN_ACTION_KEYS = ["action", "act", "disposition", "verdict", "outcome"]
 
@@ -482,10 +491,25 @@ LOG_ALIASES = {
     "externalid": ("metadata.uid", "s"), "dvchost": ("device.hostname", "s"), "devicehostname": ("device.hostname", "s"),
     "dvc": ("device.ip", "s"), "cnt": ("count", "n"), "in": ("traffic.bytes_in", "n"), "out": ("traffic.bytes_out", "n"),
     "sysloghost": ("device.hostname", "s"),
+    "sport": ("src_endpoint.port", "n"), "dport": ("dst_endpoint.port", "n"), "srcuser": ("actor.user.name", "s"),
+    "remoteuser": ("actor.user.name", "s"), "clientip": ("src_endpoint.ip", "s"),
+    "bytes": ("traffic.bytes", "n"), "packets": ("traffic.packets", "n"), "pktssent": ("traffic.packets_out", "n"),
+    "pktsreceived": ("traffic.packets_in", "n"), "rule": ("firewall_rule.name", "s"), "sessionid": ("connection_info.uid", "s"),
+    "srcloc": ("src_endpoint.location.country", "s"), "dstloc": ("dst_endpoint.location.country", "s"),
+    "threatid": ("finding_info.title", "s"), "misc": ("http_request.url.url_string", "s"),
+    "devicename": ("device.hostname", "s"), "serial": ("device.uid", "s"),
+    "systemcomputer": ("device.hostname", "s"), "eventdataipaddress": ("src_endpoint.ip", "s"),
+    "eventdatatargetusername": ("actor.user.name", "s"), "eventdatasubjectusername": ("actor.user.name", "s"),
+    "cip": ("src_endpoint.ip", "s"), "sip": ("dst_endpoint.ip", "s"), "csmethod": ("http_request.http_method", "s"),
+    "csuristem": ("http_request.url.path", "s"), "scstatus": ("http_response.code", "n"),
+    "csuseragent": ("http_request.user_agent", "s"), "csusername": ("actor.user.name", "s"),
     "start": ("start_time", "t"), "end": ("end_time", "t"),
 }
 LOG_CONSUMED = {"cef_version", "leef_version", "device_vendor", "device_product", "syslog_app"}
-FORMAT_NAMES = {"cef": "CEF", "leef": "LEEF", "kv": "key=value", "json": "JSON in a message"}
+FORMAT_NAMES = {"cef": "CEF", "leef": "LEEF", "kv": "key=value", "json": "JSON in a message",
+                "panos": "Palo Alto PAN-OS (CSV)", "xml": "XML events", "apache": "Apache / Nginx access log",
+                "table": "CSV / TSV with a header row", "w3c": "W3C / Zeek header log", "grok": "Custom grok pattern"}
+FORMAT_ORDER = ["cef", "leef", "panos", "xml", "apache", "w3c", "table", "kv", "json"]
 
 
 def strip_syslog(line):
@@ -607,6 +631,132 @@ def detect_log(line):
         return None, None
     rec.update(sys_fields)
     return fmt, rec
+
+
+def _per_line(lines, fn):
+    out = []
+    for line in lines:
+        payload, sysf = strip_syslog(line.strip())
+        rec = fn(payload)
+        if rec is None:
+            return None
+        rec = dict(rec)
+        rec.update(sysf)
+        out.append(rec)
+    return out
+
+
+def _json_payload(payload):
+    if not payload.lstrip().startswith("{"):
+        return None
+    try:
+        d = json.loads(payload)
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def try_format(f, lines, pattern=""):
+    """Try one format on every line. Returns {fmt, recs, spec, conf, skip} or None."""
+    spec, skip, conf = {}, set(), "high"
+    if f == "cef":
+        recs = _per_line(lines, lambda p: parse_cef_py(p) if looks_like_cef(p) else None)
+    elif f == "leef":
+        recs = _per_line(lines, lambda p: parse_leef_py(p) if "LEEF:" in p else None)
+    elif f == "panos":
+        recs = _per_line(lines, fm.parse_panos)
+        if recs:
+            spec = {"ptype": recs[0].get("type", ""), "psub": recs[0].get("subtype", "")}
+    elif f == "xml":
+        recs = _per_line(lines, fm.parse_xml)
+    elif f == "apache":
+        recs = _per_line(lines, fm.parse_apache)
+    elif f == "grok":
+        try:
+            rx, lua_pat, names = fm.compile_grok(pattern)
+        except ValueError as e:
+            raise ApiError(str(e))
+        recs = _per_line(lines, lambda p: fm.parse_grok(p, rx, names))
+        spec = {"lua_pattern": lua_pat, "names": names}
+    elif f in ("table", "w3c"):
+        h = fm.table_header(lines)
+        if not h or (f == "w3c" and h["kind"] != "w3c"):
+            return None
+        data = [l for i, l in enumerate(lines) if i not in h["skip"]]
+        if not data:
+            return None
+        recs = []
+        for l in data:
+            r = fm.parse_table(l, h["cols"], h["delim"])
+            if r is None:
+                return None
+            recs.append(r)
+        spec = {"cols": h["cols"], "delim": h["delim"]}
+        skip = h["skip"]
+        conf = "high" if h["kind"] == "w3c" else "low"
+    elif f == "kv":
+        recs = _per_line(lines, parse_kv_py)
+        conf = "low"
+    elif f == "json":
+        recs = _per_line(lines, _json_payload)
+    else:
+        return None
+    if not recs:
+        return None
+    return {"fmt": f, "recs": recs, "spec": spec, "conf": conf, "skip": skip}
+
+
+def sniff(lines, forced="auto", pattern=""):
+    """Work out which text format the lines are in. Header rows are reported in skip (indexes into lines)."""
+    lines = [l for l in lines if l.strip()]
+    if not lines:
+        return None
+    forced = (forced or "auto").lower()
+    if forced != "auto":
+        cands = [forced]
+    else:
+        cands = (["grok"] if (pattern or "").strip() else []) + FORMAT_ORDER
+    for f in cands:
+        try:
+            res = try_format(f, lines, pattern)
+        except ApiError:
+            if forced != "auto":
+                raise
+            continue
+        if res:
+            return res
+    return None
+
+
+def detect_info(text, forced="auto", pattern=""):
+    """What the UI badge shows: the format guess for pasted text, without generating anything."""
+    text = (text or "").strip()
+    if not text:
+        return {"format": None, "label": "", "message": "Paste in a record to test if Trickle can Auto Detect the format."}
+    try:
+        recs = parse_records(text, keep_header=True)
+    except ApiError as e:
+        return {"format": None, "label": "", "message": str(e)}
+    if not all(set(r) == {"message"} and isinstance(r["message"], str) for r in recs):
+        return {"format": "json", "label": "JSON", "conf": "high", "fields": len({k for r in recs for k in r}), "records": len(recs)}
+    lines = [r["message"] for r in recs]
+    try:
+        res = sniff(lines, forced, pattern)
+    except ApiError as e:
+        return {"format": None, "label": "", "forced": forced, "message": str(e)}
+    if not res:
+        why = "Could not read these lines as %s." % FORMAT_NAMES.get(forced, forced) if forced != "auto" else \
+            "Not recognised. For CSV or tab separated logs paste the header row first, or pick a format or a custom pattern."
+        return {"format": None, "label": "", "forced": forced, "message": why}
+    fields = sorted({k for r in res["recs"] for k in r})
+    tip = ""
+    if res["fmt"] == "table" and len(lines) < 2:
+        tip = "Header rows need at least one data row below them."
+    info = {"format": res["fmt"], "label": FORMAT_NAMES.get(res["fmt"], res["fmt"]), "conf": res["conf"],
+            "fields": len(fields), "records": len(res["recs"]), "sample": fields[:8], "tip": tip}
+    if res["fmt"] == "panos":
+        info["label"] += " " + (res["spec"].get("ptype") or "").title()
+    return info
 
 
 GEN_CEF_FUNCS = r"""
@@ -770,20 +920,31 @@ end
 }
 
 
-def build_parse_funcs(fmt):
+def build_parse_funcs(fmt, spec=None):
+    spec = spec or {}
     parts = [LUA_PARSE["syslog"]]
     if fmt == "json":
         parts.insert(0, LUA_PARSE["json"])
+    elif fmt == "panos":
+        parts.append(fm.lua_panos(spec.get("ptype", ""), lua_str))
+    elif fmt == "xml":
+        parts.append(fm.LUA_XML)
+    elif fmt == "apache":
+        parts.append(fm.lua_apache(lua_str))
+    elif fmt in ("table", "w3c"):
+        parts.append(fm.lua_table(spec["cols"], spec["delim"], lua_str))
+    elif fmt == "grok":
+        parts.append(fm.lua_grok(spec["lua_pattern"], spec["names"], lua_str))
     else:
         parts.append(LUA_PARSE[fmt])
+    call = {"cef": "parseCef(payload)", "kv": "parseKv(payload)", "panos": "parsePanos(payload)", "xml": "parseXml(payload)",
+            "apache": "parseApache(payload)", "table": "parseTable(payload)", "w3c": "parseTable(payload)", "grok": "parseGrok(payload)"}
     disp = ["", "-- Detect the payload format and return a flat table of fields (or nil).", "local function parseLine(line)",
             "    local payload, rec = stripSyslog(line)"]
-    if fmt == "cef":
-        disp += ['    local parsed = parseCef(payload)']
-    elif fmt == "leef":
+    if fmt == "leef":
         disp += ['    local parsed = nil', '    if string.find(payload, "LEEF:", 1, true) then parsed = parseLeef(payload) end']
-    elif fmt == "kv":
-        disp += ['    local parsed = parseKv(payload)']
+    elif fmt in call:
+        disp += ['    local parsed = ' + call[fmt]]
     else:
         disp += ['    local parsed = nil', '    if string.sub(string.gsub(payload, "^%s+", ""), 1, 1) == "{" then',
                  '        local ok, d = pcall(json.decode, payload)', '        if ok and type(d) == "table" then parsed = d end', '    end']
@@ -898,10 +1059,10 @@ local function civilMs(yy, mm, dd, h, mi, s)
 end
 
 local function isoToMs(ts)
-    local y, mo, d, h, mi, s = string.match(ts, "^(%d%d%d%d)-(%d%d)-(%d%d)[T ](%d%d):(%d%d):(%d%d)")
+    local y, mo, d, h, mi, s = string.match(ts, "^(%d%d%d%d)[-/](%d%d)[-/](%d%d)[T ](%d%d):(%d%d):(%d%d)")
     if not y then return nil end
     local ms = civilMs(tonumber(y), tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s))
-    local frac = string.match(ts, "^%d%d%d%d%-%d%d%-%d%d[T ]%d%d:%d%d:%d%d%.(%d+)")
+    local frac = string.match(ts, "^%d%d%d%d[-/]%d%d[-/]%d%d[T ]%d%d:%d%d:%d%d%.(%d+)")
     if frac then ms = ms + tonumber(string.sub(frac .. "000", 1, 3)) end
     return ms
 end
@@ -1051,18 +1212,19 @@ GEN_MITRE_EXTRA = r"""
 """
 
 
-def generate_serializer(text, vendor="", product="", version=""):
-    recs = parse_records(text)
-    fmt = None
-    if recs and all(isinstance(r.get("message"), str) for r in recs):
-        det = [detect_log(r["message"]) for r in recs]
-        if all(d[0] for d in det):
-            fmt = det[0][0]
-            recs = [d[1] for d in det]
-        elif not any(d[0] for d in det) and all(set(r) <= {"message", "host", "source_type", "timestamp", "service"} for r in recs):
-            raise ApiError("Could not recognise the log format. Trickle can generate from JSON, CEF, LEEF, key=value "
-                           "lines, and syslog-wrapped versions of those. For other formats, parse the line into fields "
-                           "first (for example a Vector remap step), then generate from the parsed JSON.")
+def generate_serializer(text, vendor="", product="", version="", forced="auto", pattern=""):
+    recs = parse_records(text, keep_header=True)
+    fmt, spec = None, {}
+    if recs and all(isinstance(r.get("message"), str) and set(r) <= {"message", "host", "source_type", "timestamp", "service"} for r in recs):
+        found = sniff([r["message"] for r in recs], forced, pattern)
+        if found:
+            fmt, spec, recs = found["fmt"], found["spec"], found["recs"]
+        else:
+            raise ApiError("Could not recognise the log format. Trickle reads JSON, CEF, LEEF, key=value, Palo Alto PAN-OS CSV, "
+                           "XML events, Apache/Nginx access logs, and CSV/TSV/W3C logs with a header row. For anything else pick "
+                           "Custom pattern under the paste box and describe the line with a grok-style pattern.")
+    if fmt in ("panos", "xml", "apache", "table", "w3c", "grok", "kv", "json", "cef", "leef") and not recs:
+        raise ApiError("No events found after reading the sample.")
     vendor, product = (vendor or "").strip(), (product or "").strip()
     if "/" in vendor and not product:          # Vendor / Product typed in one box
         vendor, product = [x.strip() for x in vendor.split("/", 1)]
@@ -1071,6 +1233,8 @@ def generate_serializer(text, vendor="", product="", version=""):
     if fmt:                                    # CEF and LEEF headers carry both
         vendor = vendor or (recs[0].get("device_vendor") or "").strip()
         product = product or (recs[0].get("device_product") or "").strip()
+    if fmt == "panos":
+        vendor, product = vendor or "Palo Alto Networks", product or "PAN-OS"
     def flat_paths(d, prefix=""):
         for k, v in d.items():
             path = prefix + str(k)
@@ -1111,7 +1275,9 @@ def generate_serializer(text, vendor="", product="", version=""):
     for k in keys:
         if k in consumed:
             continue
-        nested = "." in k
+        if fmt == "panos" and k == "category":
+            continue   # URL category, not a finding type
+        nested = "." in k and fmt in (None, "json", "kv", "cef", "leef")
         hit = (LOG_ALIASES.get(_norm(k)) if fmt and fmt != "json" and not nested else None) or GEN_ALIASES.get(_norm(k))
         if hit is None and nested and fmt in (None, "json"):
             hit = None   # nested fields map only when the full path has an alias; the rest go to unmapped
@@ -1152,6 +1318,8 @@ def generate_serializer(text, vendor="", product="", version=""):
     if not re.match(r"^\d+\.\d+\.\d+(-dev)?$", version):
         version = "1.8.0"
     et_key, st_key = by_norm.get("eventtype"), by_norm.get("eventsubtype")
+    if fmt == "panos":
+        et_key, st_key = by_norm.get("type"), by_norm.get("subtype")
     if et_key and st_key:
         feature = 'setNestedField(r, "metadata.product.feature.name", tostring(e[%s] or "") .. " / " .. tostring(e[%s] or ""))' % (q(et_key), q(st_key))
     elif et_key or st_key:
@@ -1164,7 +1332,7 @@ def generate_serializer(text, vendor="", product="", version=""):
                      '        if parsed then\n            e = parsed\n            envelope_ts = event.timestamp\n        end\n    end')
         parse_time = ('    -- last resort only: the envelope timestamp is ingest time, not event time\n'
                       '    if not r.time and envelope_ts then\n        local ms2 = toEpochMs(envelope_ts)\n        if ms2 then r.time = ms2 end\n    end')
-        parse_funcs = build_parse_funcs(fmt)
+        parse_funcs = build_parse_funcs(fmt, spec)
     else:
         parse_use = parse_time = parse_funcs = ""
     for a, b in [("__CEF_FUNCS__", parse_funcs), ("__CEF_USE__", parse_use), ("__CEF_TIME__", parse_time), ("__FEATURE__", feature), ("__PRODUCT_UID__", q(uid)), ("__VERSION__", version), ("__VENDOR_Q__", q(vendor)), ("__PRODUCT_Q__", q(product)), ("__VENDOR__", re.sub(r"[^\x20-\x7e]", "", vendor)),
@@ -1177,7 +1345,7 @@ def generate_serializer(text, vendor="", product="", version=""):
                  ("__EXTRA__", extra)]:
         code = code.replace(a, b)
     unmapped = [k for k in keys if k not in mapped_names and k not in consumed]
-    return {"code": code, "class_name": cname, "class_uid": cls, "format": FORMAT_NAMES.get(fmt, "JSON") if fmt else "JSON", "vendor": vendor, "product": product,
+    return {"code": code, "class_name": cname, "class_uid": cls, "fmt": fmt or "json", "spec": spec, "format": FORMAT_NAMES.get(fmt, "JSON") if fmt else "JSON", "vendor": vendor, "product": product,
             "mapped": [{"source": m[0], "target": m[1]} for m in maps],
             "handled": sorted(consumed), "unmapped": unmapped}
 
@@ -1201,24 +1369,38 @@ def norm_pipeline(p):
 
 def generate_multi(types, vendor="", product="", version=""):
     """One embedded serializer per pasted log type, plus a processEvent that picks the closest one by field names."""
-    filled = [(str(t.get("name", "")).strip(), t.get("text", "")) for t in (types or [])[:MAX_LOG_TYPES]
-              if isinstance(t, dict) and str(t.get("text", "")).strip()]
+    sel = [t for t in (types or [])[:MAX_LOG_TYPES] if isinstance(t, dict) and str(t.get("text", "")).strip()]
+    filled = [(str(t.get("name", "")).strip(), t.get("text", "")) for t in sel]
+    t_forced = [str(t.get("format") or "auto") for t in sel]
+    t_pattern = [str(t.get("pattern") or "") for t in sel]
     if not filled:
         raise ApiError("Paste at least one event into a log type box first.")
     parts, summary = [], {"mapped": [], "handled": set(), "unmapped": [], "types": []}
     chunks = []
     for i, (name, text) in enumerate(filled, 1):
-        recs = parse_records(text)
-        if all(isinstance(r.get("message"), str) and set(r) <= {"message", "host", "source_type", "timestamp", "service"} for r in recs):
-            raise ApiError("Log type %d is plain text (CEF, LEEF, key=value). Multiple log types work with JSON events for now." % i)
-        g = generate_serializer(text, vendor, product, version)
+        recs = parse_records(text, keep_header=True)
+        g = generate_serializer(text, vendor, product, version, t_forced[i - 1], t_pattern[i - 1])
         vendor, product = g["vendor"], g["product"]
         label = name or "Log type %d" % i
-        keys = sorted({k for r in recs for k in r})
+        keys = sorted({k for r in recs for k in r}) if g["fmt"] == "json" and not all(set(r) == {"message"} for r in recs) else []
         inner = g["code"]
         if "function processEvent(event)" not in inner:
             raise ApiError("Internal error: generated serializer has no processEvent.")
         inner = inner.replace("function processEvent(event)", "function process_%d(event)" % i, 1)
+        match = None
+        if g["fmt"] != "json" or "local function parseLine" in inner:
+            sp = g["spec"] or {}
+            extra = ""
+            if g["fmt"] == "panos" and sp.get("ptype"):
+                extra = ("    local score = 1\n    if string.upper(tostring(p.type or \"\")) ~= %s then return 0 end\n" % lua_str(sp["ptype"].upper()))
+                if sp.get("psub") and sp["ptype"].upper() != "TRAFFIC":
+                    extra += "    if tostring(p.subtype or \"\") == %s then score = 2 end\n" % lua_str(sp["psub"])
+                extra += "    return score\n"
+            else:
+                extra = "    return 1\n"
+            match = ("    match_%d = function(line)\n        local p = parseLine(line)\n        if not p then return 0 end\n" % i
+                     + "".join("    " + ln + "\n" for ln in extra.rstrip("\n").split("\n")) + "    end")
+            inner = inner.rstrip() + "\n" + match
         chunks.append((i, label, keys, inner))
         summary["mapped"].extend(g["mapped"])
         summary["handled"].update(g["handled"])
@@ -1228,17 +1410,34 @@ def generate_multi(types, vendor="", product="", version=""):
            "-- Each type below has its own serializer. processEvent picks the closest one by field names.",
            "-- Rules honored: no dollar-sigil tokens, single-line strings, ASCII comments.", ""]
     out.append("local " + ", ".join("process_%d" % i for i, *_ in chunks))
+    out.append("local " + ", ".join("match_%d" % i for i, *_ in chunks))
     for i, label, keys, inner in chunks:
         out += ["", "-- ---- type %d: %s ----" % (i, re.sub(r"[^\x20-\x7e]", "", label)), "do", inner.rstrip(), "end"]
     out += ["", "local TYPES = {"]
     for i, label, keys, inner in chunks:
-        out.append("    { name = %s, fn = process_%d, keys = { %s } }," % (lua_str(label), i, ", ".join("[%s] = true" % lua_str(k) for k in keys)))
+        out.append("    { name = %s, fn = process_%d, match = match_%d, keys = { %s } }," % (lua_str(label), i, i, ", ".join("[%s] = true" % lua_str(k) for k in keys)))
     out += ["}", "",
             "function processEvent(event)",
             "    if event == nil then return {} end",
             "    local e = event",
             '    if type(event.message) == "table" then e = event.message end',
             "    local best, bestScore = TYPES[1], -1",
+            "    if type(event.message) == \"string\" then",
+            "        local top = 0",
+            "        for _, t in ipairs(TYPES) do",
+            "            if t.match then",
+            "                local sc = t.match(event.message)",
+            "                if sc > top then top = sc; best = t end",
+            "            end",
+            "        end",
+            "        local r0 = best.fn(event)",
+            "        if type(r0) == \"table\" then",
+            "            if r0.metadata == nil then r0.metadata = {} end",
+            "            if r0.metadata.product == nil then r0.metadata.product = {} end",
+            "            if r0.metadata.product.feature == nil then r0.metadata.product.feature = { name = best.name } end",
+            "        end",
+            "        return r0",
+            "    end",
             "    for _, t in ipairs(TYPES) do",
             "        local hit, total, extra = 0, 0, 0",
             "        for k in pairs(t.keys) do",
@@ -2621,7 +2820,10 @@ class Handler(BaseHTTPRequestHandler):
                 b = self._read_json()
                 if isinstance(b.get("types"), list):
                     return self._json(200, generate_multi(b["types"], b.get("vendor", ""), b.get("product", ""), b.get("version", "")))
-                return self._json(200, generate_serializer(b.get("text", ""), b.get("vendor", ""), b.get("product", ""), b.get("version", "")))
+                return self._json(200, generate_serializer(b.get("text", ""), b.get("vendor", ""), b.get("product", ""), b.get("version", ""), b.get("format") or "auto", b.get("pattern") or ""))
+            if method == "POST" and path == "/api/detect":
+                b = self._read_json()
+                return self._json(200, detect_info(b.get("text", ""), b.get("format") or "auto", b.get("pattern") or ""))
             if method == "POST" and path == "/api/fixlua":
                 b = self._read_json()
                 before = load_serializer_code(b.get("step") or {})
