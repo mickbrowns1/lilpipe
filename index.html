@@ -70,6 +70,10 @@ label:first-child{margin-top:0}
 .banner.warn{background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
 .banner.err{background:var(--err-bg);border-color:color-mix(in srgb,var(--err) 40%,transparent)}
 .banner.ok{background:var(--ok-bg)}
+.banner{position:relative;padding-right:44px}
+.bnToggle{position:absolute;top:6px;right:8px;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:6px;cursor:pointer;font-size:12px;line-height:1;padding:4px 7px}
+.bnToggle:hover{color:var(--text)}
+.banner.collapsed .bnBody{max-height:1.45em;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .banner pre{margin:8px 0 0;white-space:pre-wrap;font:12px/1.4 ui-monospace,Menlo,monospace}
 .banner code{font:12px ui-monospace,Menlo,monospace;background:var(--code);padding:2px 6px;border-radius:5px;border:1px solid var(--line);word-break:break-all}
 .flow{display:flex;align-items:stretch;gap:0;padding:16px 12px;overflow-x:auto}
@@ -898,7 +902,9 @@ function renderSettings(){
 }
 
 // ---------- banners ----------
-function banner(kind, html){ $("banner").innerHTML = html ? '<div class="banner ' + kind + '">' + html + '</div>' : ""; }
+function banner(kind, html){
+  $("banner").innerHTML = html ? '<div class="banner ' + kind + '"><button class="bnToggle" data-action="bannerToggle" title="Collapse to one line" aria-label="Collapse or expand this message">&#9650;</button><div class="bnBody">' + html + '</div></div>' : "";
+}
 function statusBanner(s){
   let h = "";
   if(!s.vector) h += '<div><b>Vector is not installed yet.</b> Needed for generator, file and HTTP sources and for Vector steps. In Terminal run:<br><code>' + esc(s.install) + '</code> '
@@ -1085,6 +1091,11 @@ document.addEventListener("click", async (ev) => {
   else if(a === "config"){ doConfig(); }
   else if(a === "save"){ doSave(); }
   else if(a === "clearLua"){ const t = pipe.transforms[sel]; if(t && t.type === "lua"){ t.code = ""; t.path = ""; last = null; renderAll(); } }
+  else if(a === "bannerToggle"){
+    const bn = el.closest(".banner"); if(!bn) return;
+    const c = bn.classList.toggle("collapsed");
+    el.innerHTML = c ? "&#9660;" : "&#9650;"; el.title = c ? "Expand" : "Collapse to one line";
+  }
   else if(a === "addType"){ pipe.source.types.push({name:"", text:""}); last = null; renderAll(); }
   else if(a === "clearType"){ const t = pipe.source.types[Number(el.dataset.i)]; if(t){ t.text = ""; } last = null; renderAll(); }
   else if(a === "clearSource"){ if(pipe.source.multi){ (pipe.source.types || []).forEach((t) => { t.text = ""; }); }  const s = pipe.source; if("text" in s) s.text = ""; if("body" in s) s.body = ""; last = null; renderAll(); }
