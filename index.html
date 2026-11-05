@@ -144,6 +144,9 @@ pre.ev{margin:0 0 8px;background:var(--code);border:1px solid var(--line);border
 header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20px}
 .modal{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.5);display:flex;align-items:flex-start;justify-content:center;padding:4vh 14px;overflow-y:auto}
 .modal[hidden]{display:none}
+.modal.center{align-items:center}
+.modal.center .panel{width:min(480px,100%)}
+.modal.center .pbody{padding:16px 20px 20px}
 .modal .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.4);width:min(760px,100%);max-height:92vh;display:flex;flex-direction:column}
 .modal .phead{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line)}
 .modal .phead h2{margin:0;font-size:17px;text-transform:none;letter-spacing:0;color:var(--text);padding:0;border:0}
@@ -1043,6 +1046,7 @@ async function proposeLua(endpoint, body, title, msg){
     const r = await postJSON(endpoint, Object.assign({step: t}, body));
     const d = diffHTML(r.before, r.code);
     pendingLua = {idx: idx, code: r.code, hadPath: t.path, msg: msg(r)};
+    $("diffModal").classList.remove("center");
     $("diffTitle").textContent = title + ": review the Lua change";
     $("diffBody").innerHTML = '<p class="muted" style="margin-top:0"><b class="pass">+' + d.add + '</b> added, <b class="fail">-' + d.del + '</b> removed. Nothing is changed until you press Apply.'
       + (t.path ? " This step loads a file; Apply copies the code into the step and leaves the file untouched." : "") + '</p>'
@@ -1116,6 +1120,7 @@ document.addEventListener("click", async (ev) => {
     const t = pipe.transforms[p.idx];
     t.code = p.code; t.path = ""; last = null; renderAll();
     banner("ok", p.msg + (p.hadPath ? " The step now holds the code inline (it was loading " + esc(p.hadPath) + "), so the file itself is unchanged." : ""));
+    $("diffModal").classList.add("center");
     $("diffTitle").textContent = "Fix applied";
     $("diffBody").innerHTML = '<p style="margin-top:0">' + p.msg + '</p><p class="muted">Save this pipeline and run it again to see the result?</p>'
       + '<div style="margin-top:12px"><button class="btn primary" data-action="saveRunClose">Save and run pipeline</button> <button class="btn" data-action="diffClose">Not now</button></div>';
