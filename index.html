@@ -1115,9 +1115,13 @@ document.addEventListener("click", async (ev) => {
     const p = pendingLua; pendingLua = null; $("diffModal").hidden = true;
     const t = pipe.transforms[p.idx];
     t.code = p.code; t.path = ""; last = null; renderAll();
-    banner("ok", p.msg + (p.hadPath ? " The step now holds the code inline (it was loading " + esc(p.hadPath) + "), so the file itself is unchanged." : "")
-      + ' <button class="btn small primary" data-action="saveRun">Save and run pipeline</button>');
+    banner("ok", p.msg + (p.hadPath ? " The step now holds the code inline (it was loading " + esc(p.hadPath) + "), so the file itself is unchanged." : ""));
+    $("diffTitle").textContent = "Fix applied";
+    $("diffBody").innerHTML = '<p style="margin-top:0">' + p.msg + '</p><p class="muted">Save this pipeline and run it again to see the result?</p>'
+      + '<div style="margin-top:12px"><button class="btn primary" data-action="saveRunClose">Save and run pipeline</button> <button class="btn" data-action="diffClose">Not now</button></div>';
+    $("diffModal").hidden = false;
   }
+  else if(a === "saveRunClose"){ $("diffModal").hidden = true; if(await doSave()) doRun(); }
   else if(a === "diffClose"){ pendingLua = null; $("diffModal").hidden = true; }
   else if(a === "theme"){ toggleTheme(); renderSettings(); }
   else if(a === "busted"){ await runBustedUI(); }
