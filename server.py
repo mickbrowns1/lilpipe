@@ -2199,12 +2199,19 @@ GROUP_KEYS = ("event.type", "metadata.log_name")
 
 
 def _get_path(o, path):
-    cur = o
-    for k in path.split("."):
-        if not isinstance(cur, dict) or k not in cur:
-            return None
-        cur = cur[k]
-    return cur if isinstance(cur, (str, int, float)) and not isinstance(cur, bool) else None
+    """Value at a dotted path. Accepts nested objects, literal dotted keys ("event.type": ...), and mixes of both."""
+    if not isinstance(o, dict):
+        return o if isinstance(o, (str, int, float)) and not isinstance(o, bool) else None
+    if path in o:
+        return _get_path(o[path], "") if isinstance(o[path], dict) else (o[path] if isinstance(o[path], (str, int, float)) and not isinstance(o[path], bool) else None)
+    parts = path.split(".")
+    for i in range(1, len(parts)):
+        head = ".".join(parts[:i])
+        if head in o and isinstance(o[head], dict):
+            v = _get_path(o[head], ".".join(parts[i:]))
+            if v is not None:
+                return v
+    return None
 
 
 def _cond_ok(value, op, vals):
