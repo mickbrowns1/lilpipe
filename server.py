@@ -1891,7 +1891,9 @@ def run_busted(p):
             if m:
                 nm = m.group(2)
                 skip = "# SKIP" in nm
-                nm = re.sub(r"\s*#\s*SKIP.*$", "", nm)
+                if skip:
+                    before, _sep, after = nm.partition("# SKIP")
+                    nm = (before.strip(" -") or after.strip(" -")) or "skipped check"
                 cur = {"ok": m.group(1) == "ok", "name": nm, "detail": "", "skipped": skip}
                 tests.append(cur)
             elif cur is not None and line.startswith("#") and not cur["ok"]:
