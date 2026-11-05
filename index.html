@@ -165,7 +165,6 @@ header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20p
   <button class="btn" data-action="validate">Validate</button>
   <button class="btn" id="bustedBtn" data-action="busted" title="Run Busted checks on the Lua serializer" style="display:none">Run Busted</button>
   <button class="btn primary" id="runBtn" data-action="run" title="Run (Ctrl/Cmd+Enter)">&#9654; Run pipeline</button>
-  <button class="btn" data-action="theme" title="Switch between light and dark" aria-label="Toggle light and dark theme">&#9680;</button>
   <button class="btn" data-action="settings" title="Turn features on or off">Settings</button>
   <button class="btn helpBtn" data-action="help" title="How to use Trickle (FAQ)" aria-label="Open the help and FAQ">?</button>
 </header>
@@ -821,6 +820,8 @@ function applySettings(){
 function renderSettings(){
   const row = (key, title, desc, on) => '<label class="setrow"><input type="checkbox" data-setting="' + key + '"' + (on ? " checked" : "") + '><span><b>' + title + '</b><br><span class="muted">' + desc + '</span></span></label>';
   let h = '<p class="muted" style="margin-top:0">Turn features on or off. Saved on the server, so it survives restarts.</p>';
+  const cur = document.documentElement.getAttribute("data-theme") || (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  h += '<div class="setrow"><span><b>Theme</b><br><span class="muted">Currently ' + cur + '. Remembered in this browser.</span></span> <button class="btn small" data-action="theme" style="margin-left:auto">Switch to ' + (cur === "dark" ? "light" : "dark") + '</button></div>';
   h += row("busted_button", "Run Busted button", "Shows the Run Busted buttons that check a Lua serializer.", SETTINGS.busted_button);
   h += row("detection_coverage", "Detection coverage", "After a serializer run, checks that the fields your detections use exist in the OCSF output, matched by dataSource.name. Off by default.", SETTINGS.detection_coverage);
   h += '<h3>Lua serializers</h3><p class="muted" style="margin-top:0">' + LUALIB.length + ' found: one per saved pipeline that has a Lua step, plus the bundled example. The zip holds only your pipelines.</p>'
@@ -997,7 +998,7 @@ document.addEventListener("click", async (ev) => {
       + ' <button class="btn small primary" data-action="saveRun">Save and run pipeline</button>');
   }
   else if(a === "diffClose"){ pendingLua = null; $("diffModal").hidden = true; }
-  else if(a === "theme"){ toggleTheme(); }
+  else if(a === "theme"){ toggleTheme(); renderSettings(); }
   else if(a === "busted"){
     banner("ok", "Running Busted&hellip;");
     try {
