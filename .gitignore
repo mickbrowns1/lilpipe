@@ -3,3 +3,12 @@ output/*
 __pycache__/
 *.pyc
 .DS_Store
+
+# Proprietary detection logic: never commit. Keep it local (data/ is mounted into the container).
+extracted.json
+**/extracted.json
+detections/
+**/detections/
+data/detections*
+*detections*.json
+*detection-rules*
