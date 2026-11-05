@@ -1889,14 +1889,18 @@ def run_busted(p):
         for line in raw.splitlines():
             m = re.match(r"^(not ok|ok)\s+\d+\s*-?\s*(.*)$", line)
             if m:
-                cur = {"ok": m.group(1) == "ok", "name": m.group(2), "detail": ""}
+                nm = m.group(2)
+                skip = "# SKIP" in nm
+                nm = re.sub(r"\s*#\s*SKIP.*$", "", nm)
+                cur = {"ok": m.group(1) == "ok", "name": nm, "detail": "", "skipped": skip}
                 tests.append(cur)
             elif cur is not None and line.startswith("#") and not cur["ok"]:
                 cur["detail"] += line.lstrip("# ").rstrip() + "\n"
-        passed = sum(1 for t in tests if t["ok"])
-        failed = len(tests) - passed
+        skipped = sum(1 for t in tests if t["skipped"])
+        passed = sum(1 for t in tests if t["ok"] and not t["skipped"])
+        failed = len(tests) - passed - skipped
         crashed = (not tests) and r.returncode != 0
-        return {"ok": failed == 0 and not crashed and bool(tests), "passed": passed, "failed": failed,
+        return {"ok": failed == 0 and not crashed and bool(tests), "passed": passed, "failed": failed, "skipped": skipped,
                 "tests": tests, "records": len(recs), "raw": raw[:6000] if (crashed or failed) else ""}
     finally:
         shutil.rmtree(run_dir, ignore_errors=True)

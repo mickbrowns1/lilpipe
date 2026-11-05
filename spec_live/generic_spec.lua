@@ -1,4 +1,5 @@
--- Generic OCSF checks run by the Trickle "Run Busted" button.
+-- Generic checks run by the Trickle "Run Busted" button. OCSF-specific checks run only when the
+-- serializer produces OCSF events (class_uid or type_uid present); otherwise they are skipped.
 -- Inputs come from the environment: SERIALIZER_PATH (the Lua serializer) and
 -- SAMPLE_PATH (a Lua file that returns an array of raw records).
 
@@ -24,6 +25,34 @@ local function leaves(t, skip, out, prefix)
     return out
 end
 
+-- value at a dotted path: nested tables, literal dotted keys ("dataSource.name"), or a mix
+local function get(t, path)
+    if type(t) ~= "table" then return nil end
+    if t[path] ~= nil then return t[path] end
+    local pos = 1
+    while true do
+        local dot = string.find(path, ".", pos, true)
+        if not dot then return nil end
+        local head, rest = string.sub(path, 1, dot - 1), string.sub(path, dot + 1)
+        if type(t[head]) == "table" then
+            local v = get(t[head], rest)
+            if v ~= nil then return v end
+        end
+        pos = dot + 1
+    end
+end
+
+local ocsf = false
+for _, rec in ipairs(records) do
+    local ok, o = pcall(process, rec)
+    if ok and type(o) == "table" and (o.class_uid ~= nil or o.type_uid ~= nil) then ocsf = true; break end
+end
+
+-- schema-specific checks are skipped, not failed, when the output is not OCSF
+local function ocsf_it(name, fn)
+    if ocsf then it(name, fn) else pending(name .. " (skipped: output is not OCSF)") end
+end
+
 for i, rec in ipairs(records) do
     describe("record " .. i, function()
         local out
@@ -31,56 +60,63 @@ for i, rec in ipairs(records) do
 
         it("returns a table", function() assert.is_table(out) end)
 
-        it("sets class_uid, category_uid and activity_id as numbers", function()
+        ocsf_it("sets class_uid, category_uid and activity_id as numbers", function()
             assert.is_number(out.class_uid)
             assert.is_number(out.category_uid)
             assert.is_number(out.activity_id)
         end)
 
-        it("type_uid equals class_uid * 100 + activity_id", function()
+        ocsf_it("type_uid equals class_uid * 100 + activity_id", function()
             assert.are.equal(out.class_uid * 100 + out.activity_id, out.type_uid)
         end)
 
-        it("time is a number in epoch milliseconds", function()
+        ocsf_it("time is a number in epoch milliseconds", function()
             assert.is_number(out.time, "time missing or not a number")
             assert.is_true(out.time > 100000000000, "time looks like seconds, not milliseconds")
         end)
 
-        it("severity_id is a number", function() assert.is_number(out.severity_id) end)
+        ocsf_it("severity_id is a number", function() assert.is_number(out.severity_id) end)
 
-        it("metadata.version is set", function()
+        ocsf_it("metadata.version is set", function()
             assert.is_table(out.metadata)
             assert.is_string(out.metadata.version)
         end)
 
-        it("metadata.product.vendor_name and name are set", function()
+        ocsf_it("metadata.product.vendor_name and name are set", function()
             local p = out.metadata and out.metadata.product
             assert.is_table(p, "metadata.product missing")
             assert.is_truthy(p.vendor_name ~= nil and p.vendor_name ~= "")
             assert.is_truthy(p.name ~= nil and p.name ~= "")
         end)
 
-        it("dataSource.* is set and mirrors metadata.product.*", function()
-            local ds = out.dataSource
-            assert.is_table(ds, "dataSource missing (needed for XDR search)")
-            assert.is_truthy(ds.category ~= nil and ds.category ~= "")
-            assert.are.equal(out.metadata.product.vendor_name, ds.vendor)
-            assert.are.equal(out.metadata.product.name, ds.name)
+        ocsf_it("dataSource.* is set and mirrors metadata.product.*", function()
+            assert.is_truthy(get(out, "dataSource.name"), "dataSource missing (needed for XDR search)")
+            local cat = get(out, "dataSource.category")
+            assert.is_truthy(cat ~= nil and cat ~= "", "dataSource.category missing")
+            assert.are.equal(get(out, "metadata.product.vendor_name"), get(out, "dataSource.vendor"))
+            assert.are.equal(get(out, "metadata.product.name"), get(out, "dataSource.name"))
         end)
+
+        if not ocsf then
+            it("dataSource.name is set (detections match on it)", function()
+                local n = get(out, "dataSource.name")
+                assert.is_truthy(n ~= nil and n ~= "", "dataSource.name missing")
+            end)
+        end
 
         it("does not keep the original message (no raw_data)", function()
-            assert.is_nil(out.raw_data, "raw_data should not be set: drop the original message after parsing")
+            assert.is_nil(get(out, "raw_data"), "raw_data should not be set: drop the original message after parsing")
         end)
 
-        it("does not copy values already mapped into OCSF fields into unmapped", function()
-            if type(out.unmapped) ~= "table" then return end
-            local mapped = {}
-            for _, v in pairs(leaves(out, "unmapped")) do
-                if type(v) == "string" and #v >= 4 then mapped[v] = true end
+        it("does not copy values already mapped into other fields into unmapped", function()
+            local mapped, unm = {}, {}
+            for k, v in pairs(leaves(out)) do
+                if string.sub(k, 1, 9) == "unmapped." then unm[k] = v
+                elseif type(v) == "string" and #v >= 4 then mapped[v] = true end
             end
-            for k, v in pairs(leaves(out.unmapped)) do
+            for k, v in pairs(unm) do
                 if type(v) == "string" and #v >= 4 and mapped[v] then
-                    error("unmapped." .. k .. " duplicates a value already in an OCSF field (" .. v .. ")")
+                    error(k .. " duplicates a value already in a mapped field (" .. v .. ")")
                 end
             end
         end)

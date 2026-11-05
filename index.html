@@ -1070,8 +1070,9 @@ document.addEventListener("click", async (ev) => {
     banner("ok", "Running Busted&hellip;");
     try {
       const r = await postJSON("/api/busted", pipe);
-      const rows = r.tests.map((t) => '<div>' + (t.ok ? "&#10003; " : "&#10007; <b>") + esc(t.name) + (t.ok ? "" : "</b>") + (t.ok ? "" : '<pre style="margin:2px 0 6px;white-space:pre-wrap">' + esc(t.detail || "") + '</pre>') + '</div>').join("");
-      banner(r.ok ? "ok" : "err", "<b>Busted: " + r.passed + " passed, " + r.failed + " failed</b> across " + r.records + " record(s)."
+      const rows = r.tests.map((t) => '<div>' + (t.skipped ? '<span class="muted">&ndash; ' + esc(t.name) + ' (skipped)</span>' : (t.ok ? "&#10003; " : "&#10007; <b>") + esc(t.name) + (t.ok ? "" : "</b>")) + (t.ok ? "" : '<pre style="margin:2px 0 6px;white-space:pre-wrap">' + esc(t.detail || "") + '</pre>') + '</div>').join("");
+      banner(r.ok ? "ok" : "err", "<b>Busted: " + r.passed + " passed, " + r.failed + " failed" + (r.skipped ? ", " + r.skipped + " skipped" : "") + "</b> across " + r.records + " record(s)."
+        + (r.skipped ? " The output is not OCSF, so the OCSF-only checks were skipped instead of failed." : "")
         + '<details' + (r.ok ? "" : " open") + ' style="margin-top:6px"><summary>Show checks</summary>' + rows + '</details>'
         + (r.raw ? '<pre style="white-space:pre-wrap;margin-top:6px">' + esc(r.raw) + '</pre>' : ""));
     } catch(e){ banner("err", esc(e.message)); }
