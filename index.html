@@ -131,6 +131,9 @@ header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20p
 .modal .phead h2{margin:0;font-size:17px;text-transform:none;letter-spacing:0;color:var(--text);padding:0;border:0}
 .modal .phead .x{font-size:24px;padding:0 6px}
 .modal .pbody{padding:6px 18px 18px;overflow-y:auto}
+.setrow{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.setrow input{margin-top:4px}
+.cov{font-size:13px;line-height:1.7;margin:2px 0}
 .modal h3{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin:20px 0 6px}
 .modal details{border:1px solid var(--line);border-radius:9px;margin:6px 0;background:var(--panel)}
 .modal summary{cursor:pointer;padding:9px 12px;font-weight:600}
@@ -150,8 +153,16 @@ header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20p
   <button class="btn" data-action="validate">Validate</button>
   <button class="btn" id="bustedBtn" data-action="busted" title="Run Busted checks on the Lua serializer" style="display:none">Run Busted</button>
   <button class="btn primary" id="runBtn" data-action="run">&#9654; Run pipeline</button>
+  <button class="btn" data-action="settings" title="Turn features on or off">Settings</button>
   <button class="btn helpBtn" data-action="help" title="How to use Trickle (FAQ)" aria-label="Open the help and FAQ">?</button>
 </header>
+
+<div class="modal" id="settingsModal" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+    <div class="phead"><h2 id="setTitle">Settings</h2><button class="x" data-action="settingsClose" aria-label="Close settings">&times;</button></div>
+    <div class="pbody" id="settingsBody"></div>
+  </div>
+</div>
 
 <div class="modal" id="helpModal" hidden>
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
@@ -372,6 +383,8 @@ let tab = "events";
 let stageSel = 0;
 let menuAt = null;             // link index with open "add" menu
 let cfgText = null;
+let SETTINGS = {detection_coverage: false, busted_button: true};
+let DETFILE = false;
 let ENV = {};                  // /api/status, so hints can match how the app is running
 const pathHint = () => ENV.docker ? " Running in Docker: put the file in the <code>data</code> folder next to docker-compose.yml and use <code>/data/yourfile</code>." : "";
 let serRec = 0;                // which record the before/after view shows
@@ -503,7 +516,7 @@ function renderInspector(){
       h += field("OCSF version (used by Generate)", '<input type="text" data-k="ocsf" placeholder="1.8.0" value="' + esc(t.ocsf || "") + '">', "Stamped into metadata.version. Empty means 1.8.0.");
       h += field("Vendor (used by Generate)", '<input type="text" data-k="vendor" placeholder="Cisco" value="' + esc(t.vendor || "") + '">', "Stamped into metadata.product.vendor_name and dataSource.vendor. Empty uses the vendor in the sample (CEF and LEEF headers).");
       h += field("Product (used by Generate)", '<input type="text" data-k="product" placeholder="Meraki" value="' + esc(t.product || "") + '">', "Stamped into metadata.product.name and dataSource.name. Vendor and product differ (Cisco / Meraki, Cisco / ISE, Cisco / IronPort). You can also type <code>Vendor / Product</code> in either box and it is split on the slash.");
-      h += '<div class="insp-actions" style="margin:12px 0 4px"><button class="btn small" data-action="genLua">Generate from sample record</button> <button class="btn small" data-action="busted">Run Busted checks</button> <button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
+      h += '<div class="insp-actions" style="margin:12px 0 4px"><button class="btn small" data-action="genLua">Generate from sample record</button> ' + (SETTINGS.busted_button ? '<button class="btn small" data-action="busted">Run Busted checks</button> ' : "") + '<button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
       h += '<div class="hint">Generate reads the Raw record(s) source (JSON, CEF, LEEF, key=value or syslog-wrapped lines), builds a first-draft OCSF serializer, and replaces the code box below. Review the field map at the top, then Run.</div>';
       h += field("Or paste the serializer", '<textarea data-k="code" spellcheck="false" style="min-height:340px">' + esc(t.code) + '</textarea>',
         "Must define a global <code>processEvent(record)</code> that returns a table. Runs on local LuaJIT, so the <code>json</code> and <code>log</code> modules exist but DPM-only modules (hmac, codec) do not.");
@@ -627,7 +640,29 @@ function serializerHTML(S){
     h += '<div class="chk">' + S.checks.map((c) => '<span class="' + (c.failed ? "fail" : "pass") + '">' + (c.failed ? "FAIL" : "PASS") + '</span><span>' + esc(c.name)
       + '</span><span class="muted">' + c.passed + ' ok' + (c.failed ? ", " + c.failed + " failed (first: record " + c.first_fail + ")" : "") + '</span>').join("") + '</div>';
   }
-  const recs = S.records.filter((r) => r.index <= 20);
+  if(last && last.coverage && last.coverage.sources){
+    last.coverage.sources.forEach((c) => {
+      if(c.state === "near"){
+        h += '<div class="banner warn" style="margin:8px 0"><b>Detection coverage:</b> dataSource.name <b>' + esc(c.name) + '</b> matches no detection source. Possible match'
+          + (c.suggestions.length > 1 ? "es" : "") + ': ' + c.suggestions.map((s) => '<b>' + esc(s.name) + '</b> (' + s.rules + ' rules, ' + s.fields + ' fields)').join(", ")
+          + '. Suggestion only, nothing was changed. If it is the right product, correct Vendor / Product in the Lua step and run again.</div>';
+        return;
+      }
+      const miss = c.fields.filter((f) => f.status === "missing"), ok = c.fields.filter((f) => f.status !== "missing");
+      h += '<div class="chk" style="margin-top:8px"><span class="' + (c.failed ? "fail" : "pass") + '">' + (c.failed ? "FAIL" : "PASS") + '</span><span>Detection coverage: <b>' + esc(c.name) + '</b> ('
+        + c.rules + ' rules, ' + c.fields.length + ' fields)</span><span class="muted">' + ok.length + ' present, ' + miss.length + ' missing</span></div>';
+      if(miss.length){
+        h += '<div class="hint" style="margin:4px 0">A field can be legitimately absent for some event types. Check the rule&rsquo;s event type before treating it as a defect. Presence is counted over the ' + c.records + ' record(s) in this run.</div>'
+          + '<div class="cov">' + miss.map((f) => '<div><b class="fail">MISSING</b> <code>' + esc(f.field) + '</code> <span class="muted">used by ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
+          + ' (e.g. ' + esc(f.rule_names.slice(0, 2).join("; ")) + ')</span></div>').join("") + '</div>';
+      }
+      if(ok.length){
+        h += '<details style="margin:4px 0"><summary class="muted">Present fields (' + ok.length + ')</summary><div class="cov">' + ok.map((f) => '<div><b class="pass">OK</b> <code>' + esc(f.field)
+          + '</code> <span class="muted">' + f.present + ' of ' + f.total + ' records, ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "") + '</span></div>').join("") + '</div></details>';
+      }
+    });
+  }
+  const recs = S.records.filter((r) => r.index <= 200);
   if(serRec >= recs.length) serRec = 0;
   if(recs.length > 1){
     h += '<div class="chips">' + recs.map((r, i) => '<button class="chip' + (i === serRec ? " on" : "") + '" data-action="serRec" data-i="' + i + '">#' + r.index + (r.ok ? "" : " (error)") + '</button>').join("") + '</div>';
@@ -671,7 +706,29 @@ async function loadSaved(){
     : '<div class="empty">Nothing saved yet. Name this pipeline and press Save.</div>';
 }
 
-function renderAll(){ $("bustedBtn").style.display = hasLua() ? "" : "none"; renderFlow(); renderInspector(); renderResults(); $("pname").value = pipe.name || $("pname").value; }
+function renderAll(){ applySettings(); renderFlow(); renderInspector(); renderResults(); $("pname").value = pipe.name || $("pname").value; }
+
+
+// ---------- settings ----------
+function applySettings(){
+  const on = hasLua() && SETTINGS.busted_button;
+  $("bustedBtn").style.display = on ? "" : "none";
+}
+function renderSettings(){
+  const row = (key, title, desc, on) => '<label class="setrow"><input type="checkbox" data-setting="' + key + '"' + (on ? " checked" : "") + '><span><b>' + title + '</b><br><span class="muted">' + desc + '</span></span></label>';
+  let h = '<p class="muted" style="margin-top:0">Turn features on or off. Saved on the server, so it survives restarts.</p>';
+  h += row("busted_button", "Run Busted button", "Shows the Run Busted buttons that check a Lua serializer.", SETTINGS.busted_button);
+  h += row("detection_coverage", "Detection coverage", "After a serializer run, checks that the fields your detections use exist in the OCSF output, matched by dataSource.name. Off by default.", SETTINGS.detection_coverage);
+  h += '<h3>Detection coverage: how to enable</h3>';
+  h += '<p>Detection logic is proprietary, so this stays off until you turn it on <b>and</b> provide the file. Nothing is uploaded anywhere: the file is read on this machine, and results show only field names, rule names and counts.</p>';
+  h += '<ol style="padding-left:20px;line-height:1.6">'
+     + '<li>Put your detection export at <code>data/detections/extracted.json</code> next to <code>docker-compose.yml</code>. Docker mounts it read-only as <code>/data/detections/extracted.json</code>. The folder is in <code>.gitignore</code>, so it is never committed.</li>'
+     + '<li>Without Docker, start Trickle with <code>DETECTIONS_FILE=/path/to/extracted.json python3 server.py</code>.</li>'
+     + '<li>Turn on <b>Detection coverage</b> above, then run a pipeline with a Lua serializer.</li></ol>';
+  h += '<p>Detection file found: <b>' + (DETFILE ? "yes" : "no") + '</b>' + (SETTINGS.detection_coverage && !DETFILE ? ' <span class="fail">(the switch is on, but there is no file, so nothing is shown)</span>' : "") + '</p>';
+  h += '<p class="muted">Rules for the SentinelOne source and rules with no dataSource.name are skipped. A source name that matches nothing and is not close to anything stays silent. Close names are only suggested; nothing is changed for you.</p>';
+  $("settingsBody").innerHTML = h;
+}
 
 // ---------- banners ----------
 function banner(kind, html){ $("banner").innerHTML = html ? '<div class="banner ' + kind + '">' + html + '</div>' : ""; }
@@ -779,6 +836,8 @@ document.addEventListener("click", async (ev) => {
   else if(a === "up"){ const t = pipe.transforms.splice(sel, 1)[0]; pipe.transforms.splice(sel - 1, 0, t); sel -= 1; last = null; renderAll(); }
   else if(a === "down"){ const t = pipe.transforms.splice(sel, 1)[0]; pipe.transforms.splice(sel + 1, 0, t); sel += 1; last = null; renderAll(); }
   else if(a === "help"){ $("helpModal").hidden = false; $("helpModal").querySelector(".pbody").scrollTop = 0; $("helpModal").querySelector(".x").focus(); }
+  else if(a === "settings"){ try { const r = await api("/api/settings"); SETTINGS = r.settings; DETFILE = r.detections_file; } catch(e){} renderSettings(); $("settingsModal").hidden = false; }
+  else if(a === "settingsClose"){ $("settingsModal").hidden = true; }
   else if(a === "helpClose"){ $("helpModal").hidden = true; }
   else if(a === "run"){ doRun(); }
   else if(a === "validate"){ doValidate(); }
@@ -809,8 +868,15 @@ document.addEventListener("input", (ev) => {
     renderFlow();
   }
 });
-document.addEventListener("change", (ev) => {
+document.addEventListener("change", async (ev) => {
   const el = ev.target;
+  if(el.dataset.setting){
+    try {
+      const r = await postJSON("/api/settings", {[el.dataset.setting]: el.checked});
+      SETTINGS = r.settings; DETFILE = r.detections_file;
+    } catch(e){ banner("err", esc(e.message)); }
+    renderSettings(); renderAll(); return;
+  }
   if(el.dataset.preset){
     if(el.value === "") return;
     const list = el.dataset.preset === "filter" ? FILTER_PRESETS : REMAP_PRESETS;
@@ -839,7 +905,7 @@ $("helpModal").addEventListener("mousedown", (ev) => { if(ev.target === $("helpM
   renderAll();
   try {
     const s = await api("/api/status");
-    ENV = s; renderInspector();
+    ENV = s; if(s.settings) SETTINGS = s.settings; DETFILE = !!s.detections_file; renderAll();
     $("vecInfo").textContent = (s.docker ? "Docker  |  " : "") + (s.vector ? s.version.split(" (")[0] : "Vector not found") + "  |  " + (s.lua ? "Lua ready" : "Lua not found");
     statusBanner(s);
   } catch(e){ $("vecInfo").textContent = "server offline"; banner("err", esc(e.message)); }

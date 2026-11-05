@@ -76,6 +76,18 @@ The serializer runs on your local LuaJIT, not inside the DPM runtime. `require('
 - **On your Mac:** `brew install luajit luarocks`, then `luarocks --lua-version 5.1 --lua-dir="$(brew --prefix luajit)" --local install busted`, then `busted spec` from this folder.
 - To test your own serializer, copy the `targets` entry in the spec and point it at your file.
 
+## Settings and detection coverage
+
+The **Settings** button (top right) turns features on or off: the Run Busted buttons, and **Detection coverage**. Settings are saved on the server in `pipelines/.trickle-settings.json` (ignored by git).
+
+**Detection coverage is off by default** and shows nothing until it is enabled and a detection file exists. Detection logic is proprietary, so:
+
+1. Put your export at `data/detections/extracted.json` next to `docker-compose.yml` (Docker mounts it read-only at `/data/detections/extracted.json`). Without Docker: `DETECTIONS_FILE=/path/to/extracted.json python3 server.py`. The file location is fixed by you, never taken from the browser, and the folder is in `.gitignore`.
+2. Open **Settings** and turn on **Detection coverage**.
+3. Run a pipeline with a Lua serializer. Trickle matches the output `dataSource.name` against the detections' `dataSource.name`, then lists which fields those detections use that are missing from the serializer output (a FAIL, since a field can be legitimately absent for some event types; check the rule's event type). If the name matches nothing but is close to a known source, it suggests the name and changes nothing. If it matches nothing and is not close, it stays silent. SentinelOne rules and rules with no `dataSource.name` are skipped.
+
+Only field names, rule names and counts are shown; the file is never sent anywhere.
+
 ## Things worth knowing
 
 - Counts and "volume" come from hidden tap files after each stage, so they are exact for the events you fed in. Volume is the size of each event as JSON, which includes fields Vector adds (timestamp, host, source type), so it is not the raw log size.

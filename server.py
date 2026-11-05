@@ -1856,6 +1856,7 @@ def run_pipeline(p):
                 return {"ok": False, "stage": "serializer", "error": ser.get("fatal") or "Serializer failed.",
                         "lint": ser.get("lint", []), "log": res.get("log", [])}
             outputs = ser.pop("outputs")
+            res["coverage"] = detection_coverage(outputs)
             lines = [json.dumps(o) for o in outputs]
             res["stages"].append({"id": "serializer", "label": "lua serializer", "kind": "transform",
                                   "events": len(lines), "bytes": sum(len(l) + 1 for l in lines),
@@ -1898,9 +1899,162 @@ def pipeline_path(name):
     return PIPE_DIR / (name + ".json")
 
 
+# ---------------------------------------------------------------------------
+# Settings and detection coverage (off by default)
+# ---------------------------------------------------------------------------
+
+SETTINGS_DEFAULTS = {"detection_coverage": False, "busted_button": True}
+MAX_DETECTION_BYTES = 100 * 1024 * 1024
+_DET_CACHE = {}
+
+
+def settings_path():
+    return PIPE_DIR / ".trickle-settings.json"
+
+
+def load_settings():
+    cfg = dict(SETTINGS_DEFAULTS)
+    try:
+        saved = json.loads(settings_path().read_text())
+        for k in SETTINGS_DEFAULTS:
+            if isinstance(saved.get(k), bool):
+                cfg[k] = saved[k]
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+def save_settings(body):
+    cfg = load_settings()
+    for k in SETTINGS_DEFAULTS:
+        if k in body:
+            if not isinstance(body[k], bool):
+                raise ApiError("Setting %s must be true or false." % k)
+            cfg[k] = body[k]
+    PIPE_DIR.mkdir(exist_ok=True)
+    settings_path().write_text(json.dumps(cfg, indent=2))
+    return cfg
+
+
+def find_detections_file():
+    """The detection export lives at a fixed location chosen by the operator, never taken from a request."""
+    cands = [os.environ.get("DETECTIONS_FILE"),
+             "/data/detections/extracted.json" if IN_DOCKER else None,
+             str(HERE / "data" / "detections" / "extracted.json")]
+    for c in cands:
+        if c:
+            p = Path(c).expanduser()
+            if p.is_file():
+                return p
+    return None
+
+
+def load_detection_index(path):
+    """dataSource.name (lowercase) -> {name, rules{id: name}, fields{field: {id: name}}}. Cached by mtime."""
+    st = path.stat()
+    key = (str(path), st.st_mtime, st.st_size)
+    if key in _DET_CACHE:
+        return _DET_CACHE[key]
+    if st.st_size > MAX_DETECTION_BYTES:
+        raise ApiError("The detection file is larger than %d MB." % (MAX_DETECTION_BYTES // 1024 // 1024))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    idx = {}
+    for r in data.get("results", []):
+        rid = r.get("id") or r.get("name") or "?"
+        rname = r.get("name") or rid
+        for q in r.get("queries", []):
+            pl = q.get("pair_list", [])
+            names = {p.get("value") for p in pl if p.get("key") == "dataSource.name" and p.get("op") == "="
+                     and isinstance(p.get("value"), str)}
+            for n in names:
+                if n.strip().lower() == "sentinelone":      # does not go through this pipeline
+                    continue
+                ent = idx.setdefault(n.lower(), {"name": n, "rules": {}, "fields": {}})
+                ent["rules"][rid] = rname
+                for p in pl:
+                    k = p.get("key")
+                    if k and k != "dataSource.name":
+                        ent["fields"].setdefault(k, {})[rid] = rname
+    _DET_CACHE.clear()
+    _DET_CACHE[key] = idx
+    return idx
+
+
+def _tokens(s):
+    return set(re.findall(r"[a-z0-9]+", s.lower()))
+
+
+def near_sources(name, idx, limit=3):
+    import difflib
+    tn, out = _tokens(name), []
+    for ent in idx.values():
+        tc = _tokens(ent["name"])
+        shared = tn & tc
+        jac = len(shared) / max(1, len(tn | tc))
+        ratio = difflib.SequenceMatcher(None, name.lower(), ent["name"].lower()).ratio()
+        score = max(ratio, jac) + 0.3 * len(shared)
+        has_word = any(len(t) >= 3 for t in shared)      # a shared word, or a very close spelling
+        if (has_word and score >= 0.45) or ratio >= 0.8:
+            out.append((score, ent))
+    out.sort(key=lambda x: -x[0])
+    return [{"name": e["name"], "rules": len(e["rules"]), "fields": len(e["fields"])} for _s, e in out[:limit]]
+
+
+def _present_paths(obj, prefix="", acc=None):
+    acc = set() if acc is None else acc
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            path = prefix + str(k)
+            if v in (None, "", [], {}):
+                continue
+            acc.add(path)
+            if isinstance(v, dict):
+                _present_paths(v, path + ".", acc)
+    return acc
+
+
+def detection_coverage(outputs):
+    """None when the feature is off, the file is missing, or nothing matches. Otherwise a report per dataSource.name."""
+    if not load_settings().get("detection_coverage"):
+        return None
+    path = find_detections_file()
+    if not path or not outputs:
+        return None
+    idx = load_detection_index(path)
+    by_name = {}
+    for o in outputs:
+        ds = o.get("dataSource") if isinstance(o, dict) else None
+        n = ds.get("name") if isinstance(ds, dict) else None
+        if not n and isinstance(o, dict):
+            n = o.get("dataSource.name")
+        if isinstance(n, str) and n.strip() and n.strip().lower() != "sentinelone":
+            by_name.setdefault(n, []).append(o)
+    sources = []
+    for name, recs in by_name.items():
+        hit = idx.get(name.lower())
+        if hit is None:
+            sug = near_sources(name, idx)
+            if sug:   # no match and nothing close: stay silent
+                sources.append({"state": "near", "name": name, "records": len(recs), "suggestions": sug})
+            continue
+        paths = [_present_paths(o) for o in recs]
+        fields = []
+        for fname, rules in hit["fields"].items():
+            present = sum(1 for p in paths if fname in p)
+            fields.append({"field": fname, "rules": len(rules), "present": present, "total": len(recs),
+                           "status": "present" if present else "missing",
+                           "rule_names": sorted(set(rules.values()))[:5]})
+        fields.sort(key=lambda f: (f["status"] != "missing", -f["rules"], f["field"]))
+        missing = [f for f in fields if f["status"] == "missing"]
+        sources.append({"state": "match", "name": hit["name"], "records": len(recs), "rules": len(hit["rules"]),
+                        "fields": fields, "missing": len(missing), "failed": bool(missing)})
+    return {"sources": sources} if sources else None
+
+
 def list_pipelines():
     PIPE_DIR.mkdir(exist_ok=True)
-    return [{"name": f.stem, "updated": int(f.stat().st_mtime)} for f in sorted(PIPE_DIR.glob("*.json"))]
+    return [{"name": f.stem, "updated": int(f.stat().st_mtime)} for f in sorted(PIPE_DIR.glob("*.json"))
+            if NAME_RE.match(f.stem)]
 
 
 # ---------------------------------------------------------------------------
@@ -1958,7 +2112,7 @@ class Handler(BaseHTTPRequestHandler):
                 vec, lua = find_vector(), find_lua()
                 return self._json(200, {
                     "vector": bool(vec), "version": vector_version(vec) if vec else None,
-                    "lua": bool(lua), "lua_path": lua, "docker": IN_DOCKER, "busted": bool(find_busted()),
+                    "lua": bool(lua), "lua_path": lua, "docker": IN_DOCKER, "busted": bool(find_busted()), "settings": load_settings(), "detections_file": bool(find_detections_file()),
                     "install": "brew trust vectordotdev/brew && brew tap vectordotdev/brew && brew install vector",
                     "install_lua": "brew install luajit"})
             if method == "GET" and path == "/api/pipelines":
@@ -1992,6 +2146,11 @@ class Handler(BaseHTTPRequestHandler):
             if method == "POST" and path == "/api/generate":
                 b = self._read_json()
                 return self._json(200, generate_serializer(b.get("text", ""), b.get("vendor", ""), b.get("product", ""), b.get("version", "")))
+            if method == "GET" and path == "/api/settings":
+                return self._json(200, {"settings": load_settings(), "detections_file": bool(find_detections_file())})
+            if method == "POST" and path == "/api/settings":
+                cfg = save_settings(self._read_json())
+                return self._json(200, {"settings": cfg, "detections_file": bool(find_detections_file())})
             if method == "POST" and path == "/api/busted":
                 return self._json(200, run_busted(self._read_json()))
             if method == "POST" and path == "/api/validate":

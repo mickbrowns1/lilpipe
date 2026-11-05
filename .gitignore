@@ -12,3 +12,6 @@ detections/
 data/detections*
 *detections*.json
 *detection-rules*
+
+# local settings
+pipelines/.trickle-settings.json
