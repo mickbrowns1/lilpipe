@@ -607,14 +607,29 @@ function renderResults(){
 const OP_LABEL = {"=": "equals", "in": "is one of", "contains": "contains", "matches": "matches", "!=": "not equal to"};
 function expectHTML(f){
   if(!(f.expects && f.expects.length)) return '<div class="rec muted">rules look for: no literal value (the field is only tested for presence or a pattern)</div>';
-  return f.expects.map((e) => '<div class="rec">rules look for (' + esc(OP_LABEL[e.op] || e.op) + '): '
-    + e.values.map((v) => '<code>' + esc(v) + '</code>').join(" ") + (e.more ? ' <span class="muted">+' + e.more + ' more</span>' : "") + '</div>').join("");
+  const code = (v) => '<code>' + esc(v) + '</code>';
+  return f.expects.map((e) => {
+    const LIM = 12, head = e.values.slice(0, LIM), rest = e.values.slice(LIM);
+    return '<div class="rec">rules look for (' + esc(OP_LABEL[e.op] || e.op) + '): ' + head.map(code).join(" ")
+      + (rest.length ? ' <details style="display:inline"><summary class="muted" style="display:inline;cursor:pointer">+' + rest.length + ' more</summary> ' + rest.map(code).join(" ") + '</details>' : "") + '</div>';
+  }).join("");
 }
-const fixables = (f) => (f.suggestions || []).filter((s) => s.fixable);
-function fixBtn(f, s, small){
-  if(!s) return "";
-  return '<button class="btn small fixbtn" data-action="fixlua" data-target="' + esc(f.field) + '" data-source="' + esc(s.fix_source) + '" title="Add to the Lua: ' + esc(f.field) + ' from ' + esc(s.fix_source)
-    + ' (and remove it from unmapped)">Fix</button> ';
+function appliedFixes(){
+  const t = pipe.transforms.find((x) => x.type === "lua");
+  const out = [], re = /-- trickle-fix: (\S+) from (\S+)/g;
+  let m; const code = (t && t.code) || "";
+  while((m = re.exec(code))) out.push({target: m[1], source: m[2]});
+  return out;
+}
+function fixesHTML(missing){
+  let h = "";
+  const todo = missing.filter((f) => fixables(f).length === 1);
+  if(todo.length) h += '<div style="margin:8px 0"><button class="btn small primary" data-action="fixall" data-fixes="' + esc(JSON.stringify(todo.map((f) => ({target: f.field, source: fixables(f)[0].fix_source})))) + '">Fix all (' + todo.length + ')</button> '
+    + '<span class="muted">fields with one clear match: ' + todo.map((f) => esc(f.field)).join(", ") + '</span></div>';
+  const done = appliedFixes();
+  if(done.length) h += '<details style="margin:4px 0"><summary class="muted">Fixes applied in the Lua (' + done.length + ')</summary><div class="cov">' + done.map((d) => '<div><code>' + esc(d.target) + '</code> from <code>' + esc(d.source)
+    + '</code> <button class="btn small" data-action="unfix" data-target="' + esc(d.target) + '" data-source="' + esc(d.source) + '">Undo</button></div>').join("") + '</div></details>';
+  return h;
 }
 function coverageHTML(){
   let h = "";
@@ -629,6 +644,7 @@ function coverageHTML(){
       const miss = c.fields.filter((f) => f.status === "missing"), ok = c.fields.filter((f) => f.status !== "missing");
       h += '<div class="chk" style="margin-top:8px"><span class="' + (c.failed ? "fail" : "pass") + '">' + (c.failed ? "FAIL" : "PASS") + '</span><span>Detection coverage: <b>' + esc(c.name) + '</b> ('
         + c.rules + ' rules, ' + c.fields.length + ' fields)</span><span class="muted">' + ok.length + ' present, ' + miss.length + ' missing</span></div>';
+      h += fixesHTML(miss);
       if(miss.length){
         h += '<div class="hint" style="margin:4px 0">A field can be legitimately absent for some event types. Check the rule&rsquo;s event type before treating it as a defect. Presence is counted over the ' + c.records + ' record(s) in this run.</div>'
           + '<div class="cov">' + miss.map((f) => '<div>' + fixBtn(f, fixables(f).length === 1 ? fixables(f)[0] : null) + '<b class="fail">MISSING</b> <code>' + esc(f.field) + '</code> <span class="muted">used by ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
@@ -868,6 +884,28 @@ document.addEventListener("click", async (ev) => {
       t.code = r.code; t.path = ""; last = null; renderAll();
       banner("ok", "Lua updated: <code>" + esc(el.dataset.target) + "</code> now comes from <code>" + esc(el.dataset.source) + "</code> and is removed from <code>unmapped</code>."
         + (hadPath ? " The step now holds the code inline (it was loading " + esc(hadPath) + "), so the file itself is unchanged." : "") + ' <button class="btn small primary" data-action="saveRun">Save and run pipeline</button>');
+    } catch(e){ banner("err", esc(e.message)); }
+  }
+  else if(a === "fixall"){
+    const idx = pipe.transforms.findIndex((x) => x.type === "lua");
+    if(idx < 0){ banner("err", "There is no Lua serializer step to fix."); return; }
+    const t = pipe.transforms[idx], hadPath = t.path;
+    try {
+      const r = await postJSON("/api/fixlua", {step: t, fixes: JSON.parse(el.dataset.fixes)});
+      t.code = r.code; t.path = ""; last = null; renderAll();
+      banner(r.applied.length ? "ok" : "warn", "Applied " + r.applied.length + " fix" + (r.applied.length === 1 ? "" : "es") + ": " + r.applied.map((x) => "<code>" + esc(x.target) + "</code>").join(", ") + "."
+        + (r.skipped.length ? " Skipped: " + r.skipped.map((x) => "<code>" + esc(x.target) + "</code> (" + esc(x.reason) + ")").join("; ") : "")
+        + (hadPath ? " The step now holds the code inline (it was loading " + esc(hadPath) + "), so the file itself is unchanged." : "") + ' <button class="btn small primary" data-action="saveRun">Save and run pipeline</button>');
+    } catch(e){ banner("err", esc(e.message)); }
+  }
+  else if(a === "unfix"){
+    const idx = pipe.transforms.findIndex((x) => x.type === "lua");
+    if(idx < 0) return;
+    const t = pipe.transforms[idx], hadPath = t.path;
+    try {
+      const r = await postJSON("/api/unfixlua", {step: t, source: el.dataset.source, target: el.dataset.target});
+      t.code = r.code; t.path = ""; last = null; renderAll();
+      banner("ok", "Undid the fix for <code>" + esc(el.dataset.target) + "</code>." + (hadPath ? " The step now holds the code inline (it was loading " + esc(hadPath) + ")." : "") + ' <button class="btn small primary" data-action="saveRun">Save and run pipeline</button>');
     } catch(e){ banner("err", esc(e.message)); }
   }
   else if(a === "busted"){

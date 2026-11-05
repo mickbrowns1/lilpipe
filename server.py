@@ -2032,7 +2032,7 @@ def _leaves(obj, prefix="", acc=None):
     return acc
 
 
-def expected_values(field, ent, cap=12):
+def expected_values(field, ent, cap=200):
     """What the rules compare this field against: [{op, values, more}]. Display only."""
     out = []
     for op, vals in ((ent.get("values") or {}).get(field) or {}).items():
@@ -2157,7 +2157,10 @@ def fix_lua(step, source, target):
     (local r = {}, local e = ..., setNestedField, a final 'return r'), which generated and Cato serializers have."""
     if not (FIX_FIELD_RE.match(source or "") and FIX_FIELD_RE.match(target or "")):
         raise ApiError("Field names may only use letters, numbers, dots, dashes and underscores.")
-    code = load_serializer_code(step)
+    return _apply_fix(load_serializer_code(step), source, target)
+
+
+def _apply_fix(code, source, target):
     for need, why in (("function processEvent", "no processEvent function"), ("setNestedField", "no setNestedField helper"),
                       ("local r = {}", "the result table is not called r"), ("local e = ", "the input record is not called e")):
         if need not in code:
@@ -2226,6 +2229,34 @@ def lua_zip():
                 continue
             z.writestr(e["file"], e["code"])
     return buf.getvalue()
+
+
+def fix_many(step, fixes):
+    """Apply several fixes in order. Returns (code, applied, skipped[{target, reason}])."""
+    code = load_serializer_code(step)
+    applied, skipped = [], []
+    for f in fixes[:50]:
+        src, tgt = str((f or {}).get("source", "")), str((f or {}).get("target", ""))
+        try:
+            if not (FIX_FIELD_RE.match(src) and FIX_FIELD_RE.match(tgt)):
+                raise ApiError("Bad field name.")
+            code = _apply_fix(code, src, tgt)
+            applied.append({"source": src, "target": tgt})
+        except ApiError as e:
+            skipped.append({"target": tgt, "reason": str(e)})
+    return code, applied, skipped
+
+
+def unfix_lua(step, source, target):
+    """Remove a block that Fix added. Works on the marker comment, so hand edits elsewhere are kept."""
+    if not (FIX_FIELD_RE.match(source or "") and FIX_FIELD_RE.match(target or "")):
+        raise ApiError("Field names may only use letters, numbers, dots, dashes and underscores.")
+    code = load_serializer_code(step)
+    marker = re.escape("-- trickle-fix: %s from %s" % (target, source))
+    new, n = re.subn(r"^[ \t]*" + marker + r"[ \t]*\r?\n[ \t]*do[ \t]*\r?\n(?:.*\r?\n)*?    end[ \t]*\r?\n", "", code, count=1, flags=re.M)
+    if not n:
+        raise ApiError("That fix is not in the Lua (it may have been edited by hand).")
+    return new
 
 
 def list_pipelines():
@@ -2332,7 +2363,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, generate_serializer(b.get("text", ""), b.get("vendor", ""), b.get("product", ""), b.get("version", "")))
             if method == "POST" and path == "/api/fixlua":
                 b = self._read_json()
+                if isinstance(b.get("fixes"), list):
+                    code, applied, skipped = fix_many(b.get("step") or {}, b["fixes"])
+                    return self._json(200, {"code": code, "applied": applied, "skipped": skipped})
                 return self._json(200, {"code": fix_lua(b.get("step") or {}, str(b.get("source", "")), str(b.get("target", "")))})
+            if method == "POST" and path == "/api/unfixlua":
+                b = self._read_json()
+                return self._json(200, {"code": unfix_lua(b.get("step") or {}, str(b.get("source", "")), str(b.get("target", "")))})
             if method == "GET" and path == "/api/settings":
                 return self._json(200, {"settings": load_settings(), "detections_file": bool(find_detections_file())})
             if method == "POST" and path == "/api/settings":
