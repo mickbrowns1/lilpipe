@@ -466,6 +466,14 @@ _alias("alertinfodescription", "finding_info.desc")
 _alias("referer referrer", "http_request.referrer")
 _alias("status", "http_response.code", "n")
 _alias("protocol", "http_request.version")
+_alias("clientrequestmethod", "http_request.http_method")
+_alias("clientrequesturi clientrequestpath", "http_request.url.path")
+_alias("clientrequesthost", "http_request.url.hostname")
+_alias("clientrequestuseragent", "http_request.user_agent")
+_alias("edgeresponsestatus originresponsestatus", "http_response.code", "n")
+_alias("qname queryname dnsquery question", "query.hostname")
+_alias("qtype querytype", "query.type")
+_alias("rcode", "rcode")
 _alias("starttime", "start_time", "t")
 _alias("endtime", "end_time", "t")
 
@@ -1294,6 +1302,8 @@ def generate_serializer(text, vendor="", product="", version="", forced="auto", 
         cls, cname, cat, catname, activity = 2004, "Detection Finding", 2, "Findings", 1
     elif has("http_request"):
         cls, cname, cat, catname, activity = 4002, "HTTP Activity", 4, "Network Activity", 0
+    elif has("query."):
+        cls, cname, cat, catname, activity = 4003, "DNS Activity", 4, "Network Activity", 6
     elif has("src_endpoint") or has("dst_endpoint"):
         cls, cname, cat, catname, activity = 4001, "Network Activity", 4, "Network Activity", -1
     else:

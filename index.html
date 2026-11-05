@@ -661,6 +661,8 @@ function renderResults(){
   const tabs = [];
   if(last.serializer) tabs.push(["serializer","Serializer: before / after"]);
   tabs.push(["events","Stage events"]);
+  const dead = deadLetters();
+  if(dead.length) tabs.push(["dead", "Dead letters (" + dead.length + ")"]);
   if(last.coverage && last.coverage.sources) tabs.push(["coverage", coverageTabLabel()]);
   if(last.coverage && last.coverage.sources && last.coverage.sources.some((c) => c.groups)) tabs.push(["detgroups", "Detections (test)"]);
   if(last.printed) tabs.push(["printed","Printed output"]);
@@ -672,6 +674,8 @@ function renderResults(){
   let b = "";
   if(tab === "serializer"){
     b = serializerHTML(last.serializer);
+  } else if(tab === "dead"){
+    b = deadHTML(dead);
   } else if(tab === "coverage"){
     b = coverageHTML();
   } else if(tab === "detgroups"){
@@ -850,6 +854,23 @@ function diffRowHTML(r){
   }
   return '<div class="drow">' + tag + body + '</div>';
 }
+function deadLetters(){
+  const S = last && last.serializer;
+  if(!S || !S.records) return [];
+  return S.records.filter((r) => !r.ok || r.dropped);
+}
+function deadHTML(list){
+  let h = '<div class="hint" style="margin-bottom:8px">' + list.length + ' record(s) did not produce an event: the serializer raised an error or returned nil. In DPM these would be dropped, so this is where to look first.</div>';
+  const raw = list.filter((r) => r.input).map((r) => JSON.stringify(r.input)).join("\n");
+  if(raw) h += '<div style="margin-bottom:8px"><button class="btn small" data-action="copyDead" data-text="' + esc(raw) + '">Copy raw records</button></div>';
+  list.slice(0, 100).forEach((r) => {
+    h += '<div class="banner ' + (r.ok ? "warn" : "err") + '" style="margin:0 0 8px"><b>Record #' + r.index + '</b>: ' + (r.ok ? "returned nil, so it is dropped" : "processEvent raised an error")
+      + (r.ok ? "" : '<pre>' + esc(r.error || "") + '</pre>')
+      + (r.input ? '<pre class="ev" style="margin-top:6px;max-height:160px">' + esc(typeof r.input === "string" ? r.input : JSON.stringify(r.input, null, 2)) + '</pre>' : '<div class="muted">Raw record not kept (only the first records are stored).</div>') + '</div>';
+  });
+  if(list.length > 100) h += '<div class="hint">Showing the first 100.</div>';
+  return h;
+}
 function serializerHTML(S){
   let h = "";
   const bad = S.errors ? ' <b class="fail">' + S.errors + ' record(s) raised an error.</b>' : "";
@@ -868,7 +889,7 @@ function serializerHTML(S){
   const recs = S.records.filter((r) => r.index <= 200);
   if(serRec >= recs.length) serRec = 0;
   if(recs.length > 1){
-    h += '<div class="chips">' + recs.map((r, i) => '<button class="chip' + (i === serRec ? " on" : "") + '" data-action="serRec" data-i="' + i + '">#' + r.index + (r.ok ? "" : " (error)") + '</button>').join("") + '</div>';
+    h += '<div class="chips">' + recs.map((r, i) => '<button class="chip' + (i === serRec ? " on" : "") + '" data-action="serRec" data-i="' + i + '">#' + r.index + (r.ok ? (r.dropped ? " (dropped)" : "") : " (error)") + '</button>').join("") + '</div>';
   }
   const rec = recs[serRec];
   if(!rec){ return h + '<div class="muted">No records.</div>'; }
@@ -1177,6 +1198,7 @@ document.addEventListener("click", async (ev) => {
   else if(a === "stage"){ stageSel = Number(el.dataset.i); renderResults(); }
   else if(a === "copyInstall"){ copy(el.dataset.cmd); }
   else if(a === "copyCfg"){ copy(cfgText || ""); }
+  else if(a === "copyDead"){ copy(el.dataset.text || ""); banner("ok", "Copied the raw records that did not produce an event."); }
 });
 
 function target(){ return sel === "source" ? pipe.source : sel === "sink" ? pipe.sink : pipe.transforms[sel]; }
