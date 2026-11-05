@@ -2363,13 +2363,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, generate_serializer(b.get("text", ""), b.get("vendor", ""), b.get("product", ""), b.get("version", "")))
             if method == "POST" and path == "/api/fixlua":
                 b = self._read_json()
+                before = load_serializer_code(b.get("step") or {})
                 if isinstance(b.get("fixes"), list):
                     code, applied, skipped = fix_many(b.get("step") or {}, b["fixes"])
-                    return self._json(200, {"code": code, "applied": applied, "skipped": skipped})
-                return self._json(200, {"code": fix_lua(b.get("step") or {}, str(b.get("source", "")), str(b.get("target", "")))})
+                    return self._json(200, {"code": code, "before": before, "applied": applied, "skipped": skipped})
+                return self._json(200, {"code": fix_lua(b.get("step") or {}, str(b.get("source", "")), str(b.get("target", ""))), "before": before})
             if method == "POST" and path == "/api/unfixlua":
                 b = self._read_json()
-                return self._json(200, {"code": unfix_lua(b.get("step") or {}, str(b.get("source", "")), str(b.get("target", "")))})
+                before = load_serializer_code(b.get("step") or {})
+                return self._json(200, {"code": unfix_lua(b.get("step") or {}, str(b.get("source", "")), str(b.get("target", ""))), "before": before})
             if method == "GET" and path == "/api/settings":
                 return self._json(200, {"settings": load_settings(), "detections_file": bool(find_detections_file())})
             if method == "POST" and path == "/api/settings":

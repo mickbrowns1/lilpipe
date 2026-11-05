@@ -14,12 +14,18 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark){
-  :root{
+  :root:not([data-theme="light"]){
     --bg:#0f1318; --panel:#171c23; --panel2:#1e242d; --text:#e6e9ee; --muted:#9aa4b2; --line:#2b323d; --water:#4cc3ff;
     --accent:#2dd4bf; --accent-ink:#06201d; --src:#60a5fa; --xf:#a78bfa; --dst:#4ade80;
     --warn:#fbbf24; --warn-bg:#3a2e0c; --err:#fda29b; --err-bg:#3b1512; --ok-bg:#12301c;
     --code:#10151b; --shadow:none; color-scheme: dark;
   }
+}
+:root[data-theme="dark"]{
+    --bg:#0f1318; --panel:#171c23; --panel2:#1e242d; --text:#e6e9ee; --muted:#9aa4b2; --line:#2b323d; --water:#4cc3ff;
+    --accent:#2dd4bf; --accent-ink:#06201d; --src:#60a5fa; --xf:#a78bfa; --dst:#4ade80;
+    --warn:#fbbf24; --warn-bg:#3a2e0c; --err:#fda29b; --err-bg:#3b1512; --ok-bg:#12301c;
+    --code:#10151b; --shadow:none; color-scheme: dark;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
@@ -109,9 +115,12 @@ pre.ev{margin:0 0 8px;background:var(--code);border:1px solid var(--line);border
 .k-unmapped{background:var(--panel2);color:var(--muted)}.k-dropped{background:#fee2e2;color:#b42318}.k-added{background:#dcfce7;color:#15803d}
 .k-empty,.k-unchanged{background:var(--panel2);color:var(--muted)}
 @media (prefers-color-scheme: dark){
-  .k-moved{background:#1e3a5f;color:#93c5fd}.k-changed{background:#3a2e0c;color:#fbbf24}.k-retyped{background:#0f3a35;color:#5eead4}
-  .k-dropped{background:#3b1512;color:#fda29b}.k-added{background:#12301c;color:#86efac}
+  :root:not([data-theme="light"]) .k-moved{background:#1e3a5f;color:#93c5fd}:root:not([data-theme="light"]) .k-changed{background:#3a2e0c;color:#fbbf24}:root:not([data-theme="light"]) .k-retyped{background:#0f3a35;color:#5eead4}
+  :root:not([data-theme="light"]) .k-dropped{background:#3b1512;color:#fda29b}:root:not([data-theme="light"]) .k-added{background:#12301c;color:#86efac}
 }
+  :root[data-theme="dark"] .k-moved{background:#1e3a5f;color:#93c5fd}:root[data-theme="dark"] .k-changed{background:#3a2e0c;color:#fbbf24}:root[data-theme="dark"] .k-retyped{background:#0f3a35;color:#5eead4}
+  :root[data-theme="dark"] .k-dropped{background:#3b1512;color:#fda29b}:root[data-theme="dark"] .k-added{background:#12301c;color:#86efac}
+.dl{font:12px ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;padding:0 8px}.dl.add{background:var(--ok-bg);color:var(--dst)}.dl.del{background:var(--err-bg);color:var(--err)}.dl.ctx{color:var(--muted)}.dl.gap{color:var(--muted);text-align:center;font-style:italic}
 .pth{font:12.5px ui-monospace,Menlo,monospace;word-break:break-all}
 .val{font:12px ui-monospace,Menlo,monospace;color:var(--muted);word-break:break-all}
 .arr{color:var(--muted)}
@@ -155,7 +164,8 @@ header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20p
   <button class="btn" data-action="config">View config</button>
   <button class="btn" data-action="validate">Validate</button>
   <button class="btn" id="bustedBtn" data-action="busted" title="Run Busted checks on the Lua serializer" style="display:none">Run Busted</button>
-  <button class="btn primary" id="runBtn" data-action="run">&#9654; Run pipeline</button>
+  <button class="btn primary" id="runBtn" data-action="run" title="Run (Ctrl/Cmd+Enter)">&#9654; Run pipeline</button>
+  <button class="btn" data-action="theme" title="Switch between light and dark" aria-label="Toggle light and dark theme">&#9680;</button>
   <button class="btn" data-action="settings" title="Turn features on or off">Settings</button>
   <button class="btn helpBtn" data-action="help" title="How to use Trickle (FAQ)" aria-label="Open the help and FAQ">?</button>
 </header>
@@ -164,6 +174,13 @@ header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20p
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="setTitle">
     <div class="phead"><h2 id="setTitle">Settings</h2><button class="x" data-action="settingsClose" aria-label="Close settings">&times;</button></div>
     <div class="pbody" id="settingsBody"></div>
+  </div>
+</div>
+
+<div class="modal" id="diffModal" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="diffTitle">
+    <div class="phead"><h2 id="diffTitle">Lua change</h2><button class="x" data-action="diffClose" aria-label="Close">&times;</button></div>
+    <div class="pbody" id="diffBody"></div>
   </div>
 </div>
 
@@ -837,6 +854,56 @@ async function doConfig(){
       + ' <button class="btn small" data-action="copyCfg">Copy</button><pre>' + esc(cfgText) + "</pre>");
   } catch(e){ banner("err", esc(e.message)); }
 }
+let pendingLua = null;
+function lineDiff(a, b){
+  const A = a.split("\n"), B = b.split("\n"), n = A.length, m = B.length;
+  const L = Array.from({length: n + 1}, () => new Uint16Array(m + 1));
+  for(let i = n - 1; i >= 0; i--) for(let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i+1][j+1] + 1 : Math.max(L[i+1][j], L[i][j+1]);
+  const out = []; let i = 0, j = 0;
+  while(i < n && j < m){
+    if(A[i] === B[j]){ out.push([" ", A[i]]); i++; j++; }
+    else if(L[i+1][j] >= L[i][j+1]){ out.push(["-", A[i]]); i++; }
+    else { out.push(["+", B[j]]); j++; }
+  }
+  while(i < n) out.push(["-", A[i++]]);
+  while(j < m) out.push(["+", B[j++]]);
+  return out;
+}
+function diffHTML(before, after){
+  const rows = lineDiff(before, after), keep = new Array(rows.length).fill(false), CTX = 3;
+  rows.forEach((r, i) => { if(r[0] !== " ") for(let k = Math.max(0, i - CTX); k <= Math.min(rows.length - 1, i + CTX); k++) keep[k] = true; });
+  let h = "", gap = false, add = 0, del = 0;
+  rows.forEach((r, i) => {
+    if(r[0] === "+") add++; if(r[0] === "-") del++;
+    if(!keep[i]){ gap = true; return; }
+    if(gap){ h += '<div class="dl gap">&hellip;</div>'; gap = false; }
+    h += '<div class="dl ' + (r[0] === "+" ? "add" : r[0] === "-" ? "del" : "ctx") + '">' + esc(r[0] + " " + r[1]) + '</div>';
+  });
+  return {html: h || '<div class="muted">No change.</div>', add: add, del: del};
+}
+async function proposeLua(endpoint, body, title, msg){
+  const idx = pipe.transforms.findIndex((x) => x.type === "lua");
+  if(idx < 0){ banner("err", "There is no Lua serializer step."); return; }
+  const t = pipe.transforms[idx];
+  try {
+    const r = await postJSON(endpoint, Object.assign({step: t}, body));
+    const d = diffHTML(r.before, r.code);
+    pendingLua = {idx: idx, code: r.code, hadPath: t.path, msg: msg(r)};
+    $("diffTitle").textContent = title + ": review the Lua change";
+    $("diffBody").innerHTML = '<p class="muted" style="margin-top:0"><b class="pass">+' + d.add + '</b> added, <b class="fail">-' + d.del + '</b> removed. Nothing is changed until you press Apply.'
+      + (t.path ? " This step loads a file; Apply copies the code into the step and leaves the file untouched." : "") + '</p>'
+      + '<div style="border:1px solid var(--line);border-radius:8px;padding:6px 0;background:var(--code);overflow-x:auto">' + d.html + '</div>'
+      + '<div style="margin-top:12px"><button class="btn primary" data-action="diffApply">Apply</button> <button class="btn" data-action="diffClose">Cancel</button></div>';
+    $("diffModal").hidden = false;
+  } catch(e){ banner("err", esc(e.message)); }
+}
+function applyTheme(t){ if(t) document.documentElement.setAttribute("data-theme", t); else document.documentElement.removeAttribute("data-theme"); }
+function toggleTheme(){
+  const cur = document.documentElement.getAttribute("data-theme") || (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark";
+  applyTheme(next); try { localStorage.setItem("trickle-theme", next); } catch(e){}
+}
+try { applyTheme(localStorage.getItem("trickle-theme")); } catch(e){}
 async function doSave(){
   const name = $("pname").value.trim();
   if(!name){ banner("warn", "Give the pipeline a name first."); return false; }
@@ -876,38 +943,28 @@ document.addEventListener("click", async (ev) => {
     } catch(e){ banner("err", esc(e.message)); }
   }
   else if(a === "fixlua"){
-    const idx = pipe.transforms.findIndex((x) => x.type === "lua");
-    if(idx < 0){ banner("err", "There is no Lua serializer step to fix."); return; }
-    const t = pipe.transforms[idx], hadPath = t.path;
-    try {
-      const r = await postJSON("/api/fixlua", {step: t, source: el.dataset.source, target: el.dataset.target});
-      t.code = r.code; t.path = ""; last = null; renderAll();
-      banner("ok", "Lua updated: <code>" + esc(el.dataset.target) + "</code> now comes from <code>" + esc(el.dataset.source) + "</code> and is removed from <code>unmapped</code>."
-        + (hadPath ? " The step now holds the code inline (it was loading " + esc(hadPath) + "), so the file itself is unchanged." : "") + ' <button class="btn small primary" data-action="saveRun">Save and run pipeline</button>');
-    } catch(e){ banner("err", esc(e.message)); }
+    await proposeLua("/api/fixlua", {source: el.dataset.source, target: el.dataset.target}, "Fix " + el.dataset.target,
+      () => "Lua updated: <code>" + esc(el.dataset.target) + "</code> now comes from <code>" + esc(el.dataset.source) + "</code> and is removed from <code>unmapped</code>.");
   }
   else if(a === "fixall"){
-    const idx = pipe.transforms.findIndex((x) => x.type === "lua");
-    if(idx < 0){ banner("err", "There is no Lua serializer step to fix."); return; }
-    const t = pipe.transforms[idx], hadPath = t.path;
-    try {
-      const r = await postJSON("/api/fixlua", {step: t, fixes: JSON.parse(el.dataset.fixes)});
-      t.code = r.code; t.path = ""; last = null; renderAll();
-      banner(r.applied.length ? "ok" : "warn", "Applied " + r.applied.length + " fix" + (r.applied.length === 1 ? "" : "es") + ": " + r.applied.map((x) => "<code>" + esc(x.target) + "</code>").join(", ") + "."
-        + (r.skipped.length ? " Skipped: " + r.skipped.map((x) => "<code>" + esc(x.target) + "</code> (" + esc(x.reason) + ")").join("; ") : "")
-        + (hadPath ? " The step now holds the code inline (it was loading " + esc(hadPath) + "), so the file itself is unchanged." : "") + ' <button class="btn small primary" data-action="saveRun">Save and run pipeline</button>');
-    } catch(e){ banner("err", esc(e.message)); }
+    await proposeLua("/api/fixlua", {fixes: JSON.parse(el.dataset.fixes)}, "Fix all",
+      (r) => "Applied " + r.applied.length + " fix" + (r.applied.length === 1 ? "" : "es") + ": " + r.applied.map((x) => "<code>" + esc(x.target) + "</code>").join(", ") + "."
+        + (r.skipped.length ? " Skipped: " + r.skipped.map((x) => "<code>" + esc(x.target) + "</code> (" + esc(x.reason) + ")").join("; ") : ""));
   }
   else if(a === "unfix"){
-    const idx = pipe.transforms.findIndex((x) => x.type === "lua");
-    if(idx < 0) return;
-    const t = pipe.transforms[idx], hadPath = t.path;
-    try {
-      const r = await postJSON("/api/unfixlua", {step: t, source: el.dataset.source, target: el.dataset.target});
-      t.code = r.code; t.path = ""; last = null; renderAll();
-      banner("ok", "Undid the fix for <code>" + esc(el.dataset.target) + "</code>." + (hadPath ? " The step now holds the code inline (it was loading " + esc(hadPath) + ")." : "") + ' <button class="btn small primary" data-action="saveRun">Save and run pipeline</button>');
-    } catch(e){ banner("err", esc(e.message)); }
+    await proposeLua("/api/unfixlua", {source: el.dataset.source, target: el.dataset.target}, "Undo " + el.dataset.target,
+      () => "Undid the fix for <code>" + esc(el.dataset.target) + "</code>.");
   }
+  else if(a === "diffApply"){
+    if(!pendingLua) return;
+    const p = pendingLua; pendingLua = null; $("diffModal").hidden = true;
+    const t = pipe.transforms[p.idx];
+    t.code = p.code; t.path = ""; last = null; renderAll();
+    banner("ok", p.msg + (p.hadPath ? " The step now holds the code inline (it was loading " + esc(p.hadPath) + "), so the file itself is unchanged." : "")
+      + ' <button class="btn small primary" data-action="saveRun">Save and run pipeline</button>');
+  }
+  else if(a === "diffClose"){ pendingLua = null; $("diffModal").hidden = true; }
+  else if(a === "theme"){ toggleTheme(); }
   else if(a === "busted"){
     banner("ok", "Running Busted&hellip;");
     try {
@@ -996,7 +1053,14 @@ document.addEventListener("change", async (ev) => {
   }
 });
 $("pname").addEventListener("input", () => { pipe.name = $("pname").value; });
-document.addEventListener("keydown", (ev) => { if(ev.key === "Escape") $("helpModal").hidden = true; });
+document.addEventListener("keydown", (ev) => {
+  if(ev.key === "Escape"){ pendingLua = null; ["helpModal", "settingsModal", "diffModal"].forEach((id) => { $(id).hidden = true; }); return; }
+  const mod = ev.metaKey || ev.ctrlKey;
+  if(!mod) return;
+  const open = ["helpModal", "settingsModal", "diffModal"].some((id) => !$(id).hidden);
+  if(ev.key === "Enter" && !open){ ev.preventDefault(); if(!$("runBtn").disabled) doRun(); }
+  else if((ev.key === "s" || ev.key === "S") && !open){ ev.preventDefault(); doSave(); }
+});
 $("helpModal").addEventListener("mousedown", (ev) => { if(ev.target === $("helpModal")) $("helpModal").hidden = true; });
 
 // ---------- boot ----------
