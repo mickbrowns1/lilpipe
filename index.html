@@ -633,6 +633,12 @@ function expectHTML(f){
       + (rest.length ? ' <details style="display:inline"><summary class="muted" style="display:inline;cursor:pointer">+' + rest.length + ' more</summary> ' + rest.map(code).join(" ") + '</details>' : "") + '</div>';
   }).join("");
 }
+const fixables = (f) => (f.suggestions || []).filter((s) => s.fixable);
+function fixBtn(f, s){
+  if(!s) return "";
+  return '<button class="btn small fixbtn" data-action="fixlua" data-target="' + esc(f.field) + '" data-source="' + esc(s.fix_source) + '" title="Add to the Lua: ' + esc(f.field) + ' from ' + esc(s.fix_source)
+    + ' (and remove it from unmapped)">Fix</button> ';
+}
 function appliedFixes(){
   const t = pipe.transforms.find((x) => x.type === "lua");
   const out = [], re = /-- trickle-fix: (\S+) from (\S+)/g;
