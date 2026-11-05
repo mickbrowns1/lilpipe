@@ -518,7 +518,11 @@ function renderFlow(){
 
 // ---------- rendering: inspector ----------
 function opt(v, label, cur){ return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + '>' + esc(label) + '</option>'; }
-function field(label, inner, hint){ return '<label>' + label + '</label>' + inner + (hint ? '<div class="hint">' + hint + '</div>' : ""); }
+function field(label, inner, hint, action){
+  const head = action ? '<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px;margin-top:10px"><label style="margin:0">' + label + '</label>' + action + '</div>' : '<label>' + label + '</label>';
+  return head + inner + (hint ? '<div class="hint">' + hint + '</div>' : "");
+}
+const clearBtn = (a, i) => '<button class="btn small" data-action="' + a + '"' + (i === undefined ? "" : ' data-i="' + i + '"') + ' title="Clear this box">Clear</button>';
 function renderInspector(){
   const box = $("insp");
   let h = "";
@@ -532,28 +536,25 @@ function renderInspector(){
     if(s.type === "record" && s.multi){
       (s.types || []).forEach((t, i) => {
         h += '<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0">'
-          + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b class="muted" style="white-space:nowrap">Type ' + (i + 1) + '</b><input type="text" data-ti="' + i + '" data-tk="name" placeholder="Name, e.g. HTTP requests" value="' + esc(t.name) + '" style="flex:1;min-width:0"></div>'
+          + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b class="muted" style="white-space:nowrap">Type ' + (i + 1) + '</b><input type="text" data-ti="' + i + '" data-tk="name" placeholder="Name, e.g. HTTP requests" value="' + esc(t.name) + '" style="flex:1;min-width:0">' + clearBtn("clearType", i) + '</div>'
           + '<textarea data-ti="' + i + '" data-tk="text" spellcheck="false" placeholder="Paste one or more events of this type" style="min-height:120px">' + esc(t.text) + '</textarea>'
-          + '<div style="margin-top:4px"><button class="btn small" data-action="clearType" data-i="' + i + '">Clear</button></div></div>';
+          + '</div>';
       });
       h += '<div style="margin:6px 0 10px"><button class="btn small" data-action="addType">Add another type</button></div>'
         + '<div class="hint">Each box is one log type. Run sends all of them as one stream. Generate builds one serializer with a section per type and picks the closest one for each event by its field names. JSON events only for now.</div>';
     } else if(s.type === "record"){
       h += field("Raw record(s) as JSON", '<textarea data-k="text" spellcheck="false" style="min-height:260px">' + esc(s.text) + '</textarea>',
-        "One JSON object, an array, or one object per line. This is exactly what a collector would hand to the serializer. With only a Lua serializer after it, Vector is not used at all.");
-      h += '<div style="margin:-4px 0 10px"><button class="btn small" data-action="clearSource">Clear</button></div>';
+        "One JSON object, an array, or one object per line. This is exactly what a collector would hand to the serializer. With only a Lua serializer after it, Vector is not used at all.", clearBtn("clearSource"));
     } else if(s.type === "generator"){
       h += field("Format", '<select data-k="format" data-struct="1">' + ["syslog","json","apache_common","apache_error","bsd_syslog","shuffle"].map((f) => opt(f,f,s.format)).join("") + '</select>');
       h += field("Number of events", '<input type="number" data-k="count" min="1" max="5000000" value="' + esc(s.count) + '">', "Vector generates these as fast as it can.");
       if(s.format === "shuffle") h += field("Lines to shuffle (one per line)", '<textarea data-k="lines" spellcheck="false">' + esc(s.lines) + '</textarea>', "Good for testing dedupe: repeat a line on purpose.");
     } else if(s.type === "file"){
       h += field(ENV.docker ? "Path to a log file" : "Path to a log file on this Mac", '<input type="text" data-k="path" placeholder="' + (ENV.docker ? "/data/sample.log" : "~/Downloads/sample.log") + '" value="' + esc(s.path) + '">', "Optional. Leave empty to use the pasted text below. Max 20 MB." + pathHint());
-      h += field("Or paste log lines", '<textarea data-k="text" spellcheck="false" placeholder="One event per line">' + esc(s.text) + '</textarea>', "Each line becomes one event in the <code>message</code> field.");
-      h += '<div style="margin:-4px 0 10px"><button class="btn small" data-action="clearSource">Clear</button></div>';
+      h += field("Or paste log lines", '<textarea data-k="text" spellcheck="false" placeholder="One event per line">' + esc(s.text) + '</textarea>', "Each line becomes one event in the <code>message</code> field.", clearBtn("clearSource"));
     } else {
       h += field("Body format", '<select data-k="format">' + opt("ndjson","NDJSON (one JSON object per line)",s.format) + opt("json","One JSON object or array",s.format) + opt("text","Plain text lines",s.format) + '</select>');
-      h += field("Body to send", '<textarea data-k="body" spellcheck="false">' + esc(s.body) + '</textarea>', "Lab sends this to a temporary Vector HTTP listener, then stops it.");
-      h += '<div style="margin:-4px 0 10px"><button class="btn small" data-action="clearSource">Clear</button></div>';
+      h += field("Body to send", '<textarea data-k="body" spellcheck="false">' + esc(s.body) + '</textarea>', "Lab sends this to a temporary Vector HTTP listener, then stops it.", clearBtn("clearSource"));
     }
   } else if(sel === "sink"){
     $("inspTitle").textContent = "Destination";
@@ -584,8 +585,7 @@ function renderInspector(){
       h += field("Load a saved Lua", '<select data-lualib="1"><option value="">Pick one of ' + LUALIB.length + ' saved&hellip;</option>' + LUALIB.map((l, i) => '<option value="' + i + '">' + esc((l.kind === "file" ? "File: " : "Pipeline: ") + l.label) + '</option>').join("") + '</select>',
         "Your saved pipelines plus the bundled example. Picking one copies its code into this step (Save to keep it).");
       h += field("Or paste the serializer", '<textarea data-k="code" spellcheck="false" style="min-height:340px">' + esc(t.code) + '</textarea>',
-        "Must define a global <code>processEvent(record)</code> that returns a table. Runs on local LuaJIT, so the <code>json</code> and <code>log</code> modules exist but DPM-only modules (hmac, codec) do not.");
-      h += '<div style="margin:-4px 0 10px"><button class="btn small" data-action="clearLua">Clear</button></div>';
+        "Must define a global <code>processEvent(record)</code> that returns a table. Runs on local LuaJIT, so the <code>json</code> and <code>log</code> modules exist but DPM-only modules (hmac, codec) do not.", clearBtn("clearLua"));
     } else {
       h += field("Fields that must match (comma separated)", '<input type="text" data-k="fields" value="' + esc(t.fields) + '">', "Events with identical values in all these fields are treated as repeats. Empty uses Vector's defaults, which include the timestamp.");
     }
