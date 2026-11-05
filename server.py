@@ -2097,6 +2097,11 @@ def run_busted(p):
                 tests.append(cur)
             elif cur is not None and line.startswith("#") and not cur["ok"]:
                 cur["detail"] += line.lstrip("# ").rstrip() + "\n"
+        for t in tests:
+            nm = re.sub(r"^record \d+\s+", "", t["name"])
+            fx = BUSTED_FIXES.get(nm)
+            if fx and not t["ok"] and not t["skipped"] and not (fx[0] == "time_ms" and "seconds" not in t["detail"]):
+                t["fix"], t["fix_note"] = fx
         skipped = sum(1 for t in tests if t["skipped"])
         passed = sum(1 for t in tests if t["ok"] and not t["skipped"])
         failed = len(tests) - passed - skipped
@@ -2618,7 +2623,73 @@ def fix_lua(step, source, target):
     return _apply_fix(load_serializer_code(step), source, target)
 
 
+# Busted checks that have a safe, mechanical Lua fix. Check name -> (fix id, what the fix adds).
+BUSTED_FIXES = {
+    "type_uid equals class_uid * 100 + activity_id": ("type_uid", "Sets type_uid = class_uid * 100 + activity_id"),
+    "time is a number in epoch milliseconds": ("time_ms", "Converts time to a number and multiplies seconds by 1000"),
+    "severity_id is a number": ("severity_id", "Makes severity_id a number (0 when unknown)"),
+    "metadata.version is set": ("metadata_version", "Sets metadata.version to 1.8.0"),
+    "dataSource.* is set and mirrors metadata.product.*": ("datasource", "Copies metadata.product vendor and name into dataSource, category security"),
+    "does not keep the original message (no raw_data)": ("raw_data", "Removes raw_data from the output"),
+    "does not copy values already mapped into other fields into unmapped": ("dedupe_unmapped", "Drops unmapped values that already appear in a mapped field"),
+}
+_BUSTED_BODY = {
+    "type_uid": ["if type(r.class_uid) == \"number\" and type(r.activity_id) == \"number\" then",
+                 "    r.type_uid = r.class_uid * 100 + r.activity_id", "end"],
+    "time_ms": ["if type(r.time) == \"string\" then r.time = tonumber(r.time) or r.time end",
+                "if type(r.time) == \"number\" and r.time < 100000000000 then r.time = r.time * 1000 end"],
+    "severity_id": ["if type(r.severity_id) ~= \"number\" then r.severity_id = tonumber(r.severity_id) or 0 end"],
+    "metadata_version": ["if type(r.metadata) ~= \"table\" or r.metadata.version == nil then",
+                         "    setNestedField(r, \"metadata.version\", \"1.8.0\")", "end"],
+    "datasource": ["local p = r.metadata and r.metadata.product",
+                   "if type(p) == \"table\" then",
+                   "    if p.vendor_name then setNestedField(r, \"dataSource.vendor\", p.vendor_name) end",
+                   "    if p.name then setNestedField(r, \"dataSource.name\", p.name) end",
+                   "end",
+                   "if r.dataSource == nil or r.dataSource.category == nil then setNestedField(r, \"dataSource.category\", \"security\") end"],
+    "raw_data": ["r.raw_data = nil"],
+    "dedupe_unmapped": ["local seen = {}",
+                        "local function collect(t, top)",
+                        "    for k, v in pairs(t) do",
+                        "        if not (top and k == \"unmapped\") then",
+                        "            if type(v) == \"table\" then collect(v, false)",
+                        "            elseif type(v) == \"string\" and string.len(v) >= 4 then seen[v] = true end",
+                        "        end",
+                        "    end",
+                        "end",
+                        "collect(r, true)",
+                        "local function prune(t)",
+                        "    for k, v in pairs(t) do",
+                        "        if type(v) == \"table\" then prune(v)",
+                        "        elseif type(v) == \"string\" and string.len(v) >= 4 and seen[v] then t[k] = nil end",
+                        "    end",
+                        "end",
+                        "if type(r.unmapped) == \"table\" then prune(r.unmapped) end"],
+}
+
+
+def _apply_busted(code, fid):
+    if fid not in _BUSTED_BODY:
+        raise ApiError("Unknown Busted fix.")
+    for need, why in (("function processEvent", "no processEvent function"), ("setNestedField", "no setNestedField helper"),
+                      ("local r = {}", "the result table is not called r")):
+        if need not in code:
+            raise ApiError("Cannot fix this Lua automatically (%s). Edit the Lua by hand." % why)
+    marker = "-- trickle-fix: busted from %s" % fid
+    if marker in code:
+        raise ApiError("This fix is already in the Lua.")
+    body = "".join("        " + ln + "\n" for ln in _BUSTED_BODY[fid])
+    block = "    " + marker + "\n    do\n" + body + "    end\n"
+    m = list(re.finditer(r"^([ \t]*)return r[ \t]*\r?\n[ \t]*end[ \t]*\r?\n?\s*$", code, re.M))
+    if not m:
+        raise ApiError("Cannot fix this Lua automatically (could not find the end of processEvent).")
+    pos = m[-1].start()
+    return code[:pos] + block + code[pos:]
+
+
 def _apply_fix(code, source, target):
+    if target == "busted":
+        return _apply_busted(code, source)
     for need, why in (("function processEvent", "no processEvent function"), ("setNestedField", "no setNestedField helper"),
                       ("local r = {}", "the result table is not called r"), ("local e = ", "the input record is not called e")):
         if need not in code:

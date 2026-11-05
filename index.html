@@ -1016,6 +1016,25 @@ function diffHTML(before, after){
   });
   return {html: h || '<div class="muted">No change.</div>', add: add, del: del};
 }
+async function runBustedUI(){
+  banner("ok", "Running Busted&hellip;");
+  try {
+    const r = await postJSON("/api/busted", pipe);
+    const seen = {}, fixes = [];
+    r.tests.forEach((t) => { if(t.fix && !seen[t.fix]){ seen[t.fix] = 1; fixes.push({source: t.fix, target: "busted"}); } });
+    const rows = r.tests.map((t) => '<div>' + (t.skipped ? '<span class="muted">&ndash; ' + esc(t.name) + ' (skipped)</span>' : (t.ok ? "&#10003; " : "&#10007; <b>") + esc(t.name) + (t.ok ? "" : "</b>"))
+      + (t.fix ? ' <button class="btn small" data-action="bustedfix" data-id="' + esc(t.fix) + '" data-note="' + esc(t.fix_note) + '" title="Preview the Lua change first">Fix</button> <span class="muted">' + esc(t.fix_note) + '</span>' : "")
+      + (t.ok ? "" : '<pre style="margin:2px 0 6px;white-space:pre-wrap">' + esc(t.detail || "") + '</pre>') + '</div>').join("");
+    const done = appliedFixes().filter((d) => d.target === "busted");
+    const undo = done.length ? '<div style="margin-top:6px"><b>Busted fixes in the Lua:</b> ' + done.map((d) => '<code>' + esc(d.source) + '</code> <button class="btn small" data-action="unfix" data-target="busted" data-source="' + esc(d.source) + '">Undo</button>').join(" ") + '</div>' : "";
+    banner(r.ok ? "ok" : "err", "<b>Busted: " + r.passed + " passed, " + r.failed + " failed" + (r.skipped ? ", " + r.skipped + " skipped" : "") + "</b> across " + r.records + " record(s)."
+      + (r.skipped ? " The output is not OCSF, so the OCSF-only checks were skipped instead of failed." : "")
+      + (fixes.length ? ' <button class="btn small primary" data-action="bustedfixall" data-fixes="' + esc(JSON.stringify(fixes)) + '">Fix all (' + fixes.length + ')</button>' : "")
+      + undo
+      + '<details' + (r.ok ? "" : " open") + ' style="margin-top:6px"><summary>Show checks</summary>' + rows + '</details>'
+      + (r.raw ? '<pre style="white-space:pre-wrap;margin-top:6px">' + esc(r.raw) + '</pre>' : ""));
+  } catch(e){ banner("err", esc(e.message)); }
+}
 async function proposeLua(endpoint, body, title, msg){
   const idx = pipe.transforms.findIndex((x) => x.type === "lua");
   if(idx < 0){ banner("err", "There is no Lua serializer step."); return; }
@@ -1101,16 +1120,14 @@ document.addEventListener("click", async (ev) => {
   }
   else if(a === "diffClose"){ pendingLua = null; $("diffModal").hidden = true; }
   else if(a === "theme"){ toggleTheme(); renderSettings(); }
-  else if(a === "busted"){
-    banner("ok", "Running Busted&hellip;");
-    try {
-      const r = await postJSON("/api/busted", pipe);
-      const rows = r.tests.map((t) => '<div>' + (t.skipped ? '<span class="muted">&ndash; ' + esc(t.name) + ' (skipped)</span>' : (t.ok ? "&#10003; " : "&#10007; <b>") + esc(t.name) + (t.ok ? "" : "</b>")) + (t.ok ? "" : '<pre style="margin:2px 0 6px;white-space:pre-wrap">' + esc(t.detail || "") + '</pre>') + '</div>').join("");
-      banner(r.ok ? "ok" : "err", "<b>Busted: " + r.passed + " passed, " + r.failed + " failed" + (r.skipped ? ", " + r.skipped + " skipped" : "") + "</b> across " + r.records + " record(s)."
-        + (r.skipped ? " The output is not OCSF, so the OCSF-only checks were skipped instead of failed." : "")
-        + '<details' + (r.ok ? "" : " open") + ' style="margin-top:6px"><summary>Show checks</summary>' + rows + '</details>'
-        + (r.raw ? '<pre style="white-space:pre-wrap;margin-top:6px">' + esc(r.raw) + '</pre>' : ""));
-    } catch(e){ banner("err", esc(e.message)); }
+  else if(a === "busted"){ await runBustedUI(); }
+  else if(a === "bustedfix"){
+    await proposeLua("/api/fixlua", {source: el.dataset.id, target: "busted"}, "Fix: " + el.dataset.note,
+      () => "Fix added to the Lua: " + esc(el.dataset.note) + '. <button class="btn small" data-action="busted">Run Busted again</button>');
+  }
+  else if(a === "bustedfixall"){
+    await proposeLua("/api/fixlua", {fixes: JSON.parse(el.dataset.fixes)}, "Fix all Busted failures",
+      (r) => "Added " + r.applied.length + " fix block" + (r.applied.length === 1 ? "" : "s") + (r.skipped.length ? " (skipped " + r.skipped.length + ": " + r.skipped.map((x) => esc(x.reason)).join("; ") + ")" : "") + '. <button class="btn small" data-action="busted">Run Busted again</button>');
   }
   else if(a === "serRec"){ serRec = Number(el.dataset.i); renderResults(); }
   else if(a === "serView"){ serView = el.dataset.v; renderResults(); }
