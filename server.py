@@ -1977,7 +1977,7 @@ def load_detection_index(path):
                         ent["fields"].setdefault(k, {})[rid] = rname
                         vs = p.get("value")
                         for v in (vs if isinstance(vs, list) else [vs]):
-                            if isinstance(v, str) and v and v != ":anycase" and p.get("op") in ("=", "in", "contains"):
+                            if isinstance(v, str) and v and v != ":anycase" and p.get("op"):
                                 ent.setdefault("values", {}).setdefault(k, {}).setdefault(p["op"], set()).add(v)
     _DET_CACHE.clear()
     _DET_CACHE[key] = idx
@@ -2028,6 +2028,16 @@ def _leaves(obj, prefix="", acc=None):
             elif isinstance(v, (str, int, float)) and not isinstance(v, bool) and str(v) != "":
                 acc.setdefault(p, []).append(str(v))
     return acc
+
+
+def expected_values(field, ent, cap=12):
+    """What the rules compare this field against: [{op, values, more}]. Display only."""
+    out = []
+    for op, vals in ((ent.get("values") or {}).get(field) or {}).items():
+        vs = sorted(vals, key=str.lower)
+        out.append({"op": op, "values": vs[:cap], "more": max(0, len(vs) - cap)})
+    out.sort(key=lambda x: (x["op"] not in ("=", "in"), x["op"]))
+    return out
 
 
 def recommend_sources(field, ent, inputs, outputs):
@@ -2101,7 +2111,8 @@ def detection_coverage(outputs, inputs=None):
             present = sum(1 for p in paths if fname in p)
             fields.append({"field": fname, "rules": len(rules), "present": present, "total": len(recs),
                            "status": "present" if present else "missing",
-                           "rule_names": sorted(set(rules.values()))[:5]})
+                           "rule_names": sorted(set(rules.values()))[:5],
+                           "expects": expected_values(fname, hit)})
             if not present:
                 fields[-1]["suggestions"] = recommend_sources(fname, hit, inputs, recs)
         fields.sort(key=lambda f: (f["status"] != "missing", -f["rules"], f["field"]))
