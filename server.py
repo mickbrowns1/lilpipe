@@ -20,6 +20,7 @@ How a run works
 4. A "raw record" source with no Vector steps skips Vector entirely: the
    record goes straight to the serializer, like a DPM collector would hand it.
 """
+import io
 import json
 import os
 import re
@@ -28,6 +29,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import zipfile
 import threading
 import time
 import urllib.request
@@ -2185,6 +2187,45 @@ def fix_lua(step, source, target):
     return code[:pos] + block + code[pos:]
 
 
+def collect_lua():
+    """Every Lua serializer Trickle knows about: saved pipelines first, then .lua files in the data folder."""
+    out, seen = [], set()
+    PIPE_DIR.mkdir(exist_ok=True)
+    for f in sorted(PIPE_DIR.glob("*.json")):
+        if not NAME_RE.match(f.stem):
+            continue
+        try:
+            p = json.loads(f.read_text())
+        except ValueError:
+            continue
+        for t in p.get("transforms") or []:
+            if isinstance(t, dict) and t.get("type") == "lua":
+                try:
+                    code = load_serializer_code(t)
+                except ApiError:
+                    continue
+                out.append({"id": "pipeline:" + f.stem, "label": f.stem, "kind": "pipeline", "file": "pipelines/" + f.stem.replace("/", "_") + ".lua",
+                            "code": code, "vendor": t.get("vendor", ""), "product": t.get("product", ""), "ocsf": t.get("ocsf", "")})
+                break
+    for d in ([Path("/data")] if IN_DOCKER else []) + [HERE / "data"]:
+        if d.is_dir():
+            for f in sorted(d.glob("*.lua")):
+                if f.name in seen or f.stat().st_size > MAX_CODE_BYTES:
+                    continue
+                seen.add(f.name)
+                out.append({"id": "file:" + f.name, "label": f.name, "kind": "file", "file": "data/" + f.name,
+                            "code": f.read_text(encoding="utf-8", errors="replace"), "vendor": "", "product": "", "ocsf": ""})
+    return out
+
+
+def lua_zip():
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for e in collect_lua():
+            z.writestr(e["file"], e["code"])
+    return buf.getvalue()
+
+
 def list_pipelines():
     PIPE_DIR.mkdir(exist_ok=True)
     return [{"name": f.stem, "updated": int(f.stat().st_mtime)} for f in sorted(PIPE_DIR.glob("*.json"))
@@ -2211,9 +2252,11 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def _send(self, status, body, ctype="application/json"):
+    def _send(self, status, body, ctype="application/json", extra=None):
         data = body if isinstance(body, bytes) else body.encode("utf-8")
         self.send_response(status)
+        for hk, hv in (extra or {}).items():
+            self.send_header(hk, hv)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
@@ -2249,6 +2292,11 @@ class Handler(BaseHTTPRequestHandler):
                     "lua": bool(lua), "lua_path": lua, "docker": IN_DOCKER, "busted": bool(find_busted()), "settings": load_settings(), "detections_file": bool(find_detections_file()),
                     "install": "brew trust vectordotdev/brew && brew tap vectordotdev/brew && brew install vector",
                     "install_lua": "brew install luajit"})
+            if method == "GET" and path == "/api/lua":
+                return self._json(200, collect_lua())
+            if method == "GET" and path == "/api/lua.zip":
+                return self._send(200, lua_zip(), "application/zip",
+                                  {"Content-Disposition": 'attachment; filename="trickle-lua.zip"'})
             if method == "GET" and path == "/api/pipelines":
                 return self._json(200, list_pipelines())
             m = re.match(r"^/api/pipelines/(.+)$", path)

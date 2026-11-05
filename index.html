@@ -381,6 +381,8 @@ function defaultPipeline(){
 }
 let pipe = defaultPipeline();
 let sel = "source";            // "source" | "sink" | integer index of transform
+let LUALIB = [];              // saved Lua serializers (pipelines + data folder)
+async function loadLua(){ try { LUALIB = await api("/api/lua"); } catch(e){ LUALIB = []; } }
 let last = null;               // last run result
 let tab = "events";
 let stageSel = 0;
@@ -521,6 +523,8 @@ function renderInspector(){
       h += field("Product (used by Generate)", '<input type="text" data-k="product" placeholder="Meraki" value="' + esc(t.product || "") + '">', "Stamped into metadata.product.name and dataSource.name. Vendor and product differ (Cisco / Meraki, Cisco / ISE, Cisco / IronPort). You can also type <code>Vendor / Product</code> in either box and it is split on the slash.");
       h += '<div class="insp-actions" style="margin:12px 0 4px"><button class="btn small" data-action="genLua">Generate from sample record</button> ' + (SETTINGS.busted_button ? '<button class="btn small" data-action="busted">Run Busted checks</button> ' : "") + '<button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
       h += '<div class="hint">Generate reads the Raw record(s) source (JSON, CEF, LEEF, key=value or syslog-wrapped lines), builds a first-draft OCSF serializer, and replaces the code box below. Review the field map at the top, then Run.</div>';
+      h += field("Load a saved Lua", '<select data-lualib="1"><option value="">Pick one of ' + LUALIB.length + ' saved&hellip;</option>' + LUALIB.map((l, i) => '<option value="' + i + '">' + esc((l.kind === "file" ? "File: " : "Pipeline: ") + l.label) + '</option>').join("") + '</select>',
+        "Every Lua from your saved pipelines and from the data folder. Picking one copies its code into this step (Save to keep it).");
       h += field("Or paste the serializer", '<textarea data-k="code" spellcheck="false" style="min-height:340px">' + esc(t.code) + '</textarea>',
         "Must define a global <code>processEvent(record)</code> that returns a table. Runs on local LuaJIT, so the <code>json</code> and <code>log</code> modules exist but DPM-only modules (hmac, codec) do not.");
     } else {
@@ -753,6 +757,8 @@ function renderSettings(){
   let h = '<p class="muted" style="margin-top:0">Turn features on or off. Saved on the server, so it survives restarts.</p>';
   h += row("busted_button", "Run Busted button", "Shows the Run Busted buttons that check a Lua serializer.", SETTINGS.busted_button);
   h += row("detection_coverage", "Detection coverage", "After a serializer run, checks that the fields your detections use exist in the OCSF output, matched by dataSource.name. Off by default.", SETTINGS.detection_coverage);
+  h += '<h3>Lua serializers</h3><p class="muted" style="margin-top:0">' + LUALIB.length + ' found: one per saved pipeline that has a Lua step, plus .lua files in the data folder.</p>'
+     + '<p><a class="btn small" href="/api/lua.zip" download="trickle-lua.zip" style="text-decoration:none">Download all Lua (.zip)</a></p>';
   h += '<h3>Detection coverage: how to enable</h3>';
   h += '<p>Detection logic is proprietary, so this stays off until you turn it on <b>and</b> provide the file. Nothing is uploaded anywhere: the file is read on this machine, and results show only field names, rule names and counts.</p>';
   h += '<ol style="padding-left:20px;line-height:1.6">'
@@ -819,7 +825,7 @@ async function doSave(){
   const name = $("pname").value.trim();
   if(!name){ banner("warn", "Give the pipeline a name first."); return; }
   pipe.name = name;
-  try { await api("/api/pipelines/" + encodeURIComponent(name), {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(pipe)}); banner("ok", "Saved <b>" + esc(name) + "</b>."); await loadSaved(); }
+  try { await api("/api/pipelines/" + encodeURIComponent(name), {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(pipe)}); banner("ok", "Saved <b>" + esc(name) + "</b>."); await loadSaved(); await loadLua(); renderAll(); }
   catch(e){ banner("err", esc(e.message)); }
 }
 async function doLoad(name){
@@ -882,7 +888,7 @@ document.addEventListener("click", async (ev) => {
   else if(a === "up"){ const t = pipe.transforms.splice(sel, 1)[0]; pipe.transforms.splice(sel - 1, 0, t); sel -= 1; last = null; renderAll(); }
   else if(a === "down"){ const t = pipe.transforms.splice(sel, 1)[0]; pipe.transforms.splice(sel + 1, 0, t); sel += 1; last = null; renderAll(); }
   else if(a === "help"){ $("helpModal").hidden = false; $("helpModal").querySelector(".pbody").scrollTop = 0; $("helpModal").querySelector(".x").focus(); }
-  else if(a === "settings"){ try { const r = await api("/api/settings"); SETTINGS = r.settings; DETFILE = r.detections_file; } catch(e){} renderSettings(); $("settingsModal").hidden = false; }
+  else if(a === "settings"){ await loadLua(); try { const r = await api("/api/settings"); SETTINGS = r.settings; DETFILE = r.detections_file; } catch(e){} renderSettings(); $("settingsModal").hidden = false; }
   else if(a === "settingsClose"){ $("settingsModal").hidden = true; }
   else if(a === "helpClose"){ $("helpModal").hidden = true; }
   else if(a === "run"){ doRun(); }
@@ -923,6 +929,15 @@ document.addEventListener("change", async (ev) => {
     } catch(e){ banner("err", esc(e.message)); }
     renderSettings(); renderAll(); return;
   }
+  if(el.dataset.lualib){
+    if(el.value === "") return;
+    const l = LUALIB[Number(el.value)], t = pipe.transforms[sel];
+    if(!l || !t) return;
+    t.code = l.code; t.path = "";
+    if(l.vendor) t.vendor = l.vendor; if(l.product) t.product = l.product; if(l.ocsf) t.ocsf = l.ocsf;
+    last = null; renderAll(); banner("ok", "Loaded <b>" + esc(l.label) + "</b> into this step. Press <b>Run pipeline</b> to test it, <b>Save</b> to keep it.");
+    return;
+  }
   if(el.dataset.preset){
     if(el.value === "") return;
     const list = el.dataset.preset === "filter" ? FILTER_PRESETS : REMAP_PRESETS;
@@ -955,7 +970,7 @@ $("helpModal").addEventListener("mousedown", (ev) => { if(ev.target === $("helpM
     $("vecInfo").textContent = (s.docker ? "Docker  |  " : "") + (s.vector ? s.version.split(" (")[0] : "Vector not found") + "  |  " + (s.lua ? "Lua ready" : "Lua not found");
     statusBanner(s);
   } catch(e){ $("vecInfo").textContent = "server offline"; banner("err", esc(e.message)); }
-  loadSaved();
+  loadSaved(); loadLua().then(renderAll);
 })();
 </script>
 </body>
