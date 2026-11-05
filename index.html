@@ -823,10 +823,10 @@ async function doConfig(){
 }
 async function doSave(){
   const name = $("pname").value.trim();
-  if(!name){ banner("warn", "Give the pipeline a name first."); return; }
+  if(!name){ banner("warn", "Give the pipeline a name first."); return false; }
   pipe.name = name;
-  try { await api("/api/pipelines/" + encodeURIComponent(name), {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(pipe)}); banner("ok", "Saved <b>" + esc(name) + "</b>."); await loadSaved(); await loadLua(); renderAll(); }
-  catch(e){ banner("err", esc(e.message)); }
+  try { await api("/api/pipelines/" + encodeURIComponent(name), {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(pipe)}); banner("ok", "Saved <b>" + esc(name) + "</b>."); await loadSaved(); await loadLua(); renderAll(); return true; }
+  catch(e){ banner("err", esc(e.message)); return false; }
 }
 async function doLoad(name){
   try {
@@ -867,8 +867,7 @@ document.addEventListener("click", async (ev) => {
       const r = await postJSON("/api/fixlua", {step: t, source: el.dataset.source, target: el.dataset.target});
       t.code = r.code; t.path = ""; last = null; renderAll();
       banner("ok", "Lua updated: <code>" + esc(el.dataset.target) + "</code> now comes from <code>" + esc(el.dataset.source) + "</code> and is removed from <code>unmapped</code>."
-        + (hadPath ? " The step now holds the code inline (it was loading " + esc(hadPath) + "), so the file itself is unchanged." : "") + " Re-running&hellip; press <b>Save</b> (left) to keep it.");
-      doRun();
+        + (hadPath ? " The step now holds the code inline (it was loading " + esc(hadPath) + "), so the file itself is unchanged." : "") + ' <button class="btn small primary" data-action="saveRun">Save and run pipeline</button>');
     } catch(e){ banner("err", esc(e.message)); }
   }
   else if(a === "busted"){
@@ -895,6 +894,7 @@ document.addEventListener("click", async (ev) => {
   else if(a === "validate"){ doValidate(); }
   else if(a === "config"){ doConfig(); }
   else if(a === "save"){ doSave(); }
+  else if(a === "saveRun"){ if(await doSave()) doRun(); }
   else if(a === "load"){ doLoad(el.dataset.name); }
   else if(a === "deleteSaved"){
     ev.stopPropagation();
