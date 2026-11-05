@@ -2213,7 +2213,7 @@ def collect_lua():
                 if f.name in seen or f.stat().st_size > MAX_CODE_BYTES:
                     continue
                 seen.add(f.name)
-                out.append({"id": "file:" + f.name, "label": f.name, "kind": "file", "file": "data/" + f.name,
+                out.append({"id": "file:" + f.name, "label": f.name, "kind": "file", "file": "data/" + f.name, "zip": False,
                             "code": f.read_text(encoding="utf-8", errors="replace"), "vendor": "", "product": "", "ocsf": ""})
     return out
 
@@ -2222,6 +2222,8 @@ def lua_zip():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for e in collect_lua():
+            if e.get("zip") is False:      # bundled examples are not your work
+                continue
             z.writestr(e["file"], e["code"])
     return buf.getvalue()
 

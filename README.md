@@ -70,7 +70,7 @@ The serializer runs on your local LuaJIT, not inside the DPM runtime. `require('
 
 ## Testing serializers with Busted
 
-`spec/serializer_spec.lua` checks `data/cato_ocsf.lua` and the generator output (26 tests: class and `type_uid`, epoch-ms time, OCSF 1.8.0, `dataSource.*` mirroring `metadata.product.*`, endpoints, finding fields, and that mapped fields never leak into `unmapped`).
+`spec/serializer_spec.lua` checks the generator output on a Cato sample (about 14 tests: class and `type_uid`, epoch-ms time, OCSF 1.8.0, `dataSource.*` mirroring `metadata.product.*`, endpoints, finding fields, and that mapped fields never leak into `unmapped`).
 
 - **In Docker (nothing to install):** `docker compose --profile test run --rm tests`. The first run builds a separate test image with LuaRocks and Busted; the app image is unchanged.
 - **On your Mac:** `brew install luajit luarocks`, then `luarocks --lua-version 5.1 --lua-dir="$(brew --prefix luajit)" --local install busted`, then `busted spec` from this folder.

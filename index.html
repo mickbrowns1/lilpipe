@@ -517,14 +517,14 @@ function renderInspector(){
     } else if(t.type === "sample"){
       h += field("Keep 1 of every N events", '<input type="number" data-k="n" min="1" value="' + esc(t.n) + '">', "N = 10 keeps about 10% of events.");
     } else if(t.type === "lua"){
-      h += field(ENV.docker ? "Serializer file (optional)" : "Serializer file on this Mac (optional)", '<input type="text" data-k="path" placeholder="' + (ENV.docker ? "/data/cato_ocsf.lua" : "~/serializers/cato_ocsf.lua") + '" value="' + esc(t.path) + '">', "If set, this file is used instead of the code below, and is re-read on every run." + pathHint());
+      h += field(ENV.docker ? "Serializer file (optional)" : "Serializer file on this Mac (optional)", '<input type="text" data-k="path" placeholder="' + (ENV.docker ? "/data/my_serializer.lua" : "~/serializers/my_serializer.lua") + '" value="' + esc(t.path) + '">', "If set, this file is used instead of the code below, and is re-read on every run." + pathHint());
       h += field("OCSF version (used by Generate)", '<input type="text" data-k="ocsf" placeholder="1.8.0" value="' + esc(t.ocsf || "") + '">', "Stamped into metadata.version. Empty means 1.8.0.");
       h += field("Vendor (used by Generate)", '<input type="text" data-k="vendor" placeholder="Cisco" value="' + esc(t.vendor || "") + '">', "Stamped into metadata.product.vendor_name and dataSource.vendor. Empty uses the vendor in the sample (CEF and LEEF headers).");
       h += field("Product (used by Generate)", '<input type="text" data-k="product" placeholder="Meraki" value="' + esc(t.product || "") + '">', "Stamped into metadata.product.name and dataSource.name. Vendor and product differ (Cisco / Meraki, Cisco / ISE, Cisco / IronPort). You can also type <code>Vendor / Product</code> in either box and it is split on the slash.");
       h += '<div class="insp-actions" style="margin:12px 0 4px"><button class="btn small" data-action="genLua">Generate from sample record</button> ' + (SETTINGS.busted_button ? '<button class="btn small" data-action="busted">Run Busted checks</button> ' : "") + '<button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
       h += '<div class="hint">Generate reads the Raw record(s) source (JSON, CEF, LEEF, key=value or syslog-wrapped lines), builds a first-draft OCSF serializer, and replaces the code box below. Review the field map at the top, then Run.</div>';
       h += field("Load a saved Lua", '<select data-lualib="1"><option value="">Pick one of ' + LUALIB.length + ' saved&hellip;</option>' + LUALIB.map((l, i) => '<option value="' + i + '">' + esc((l.kind === "file" ? "File: " : "Pipeline: ") + l.label) + '</option>').join("") + '</select>',
-        "Every Lua from your saved pipelines and from the data folder. Picking one copies its code into this step (Save to keep it).");
+        "Your saved pipelines plus the bundled example. Picking one copies its code into this step (Save to keep it).");
       h += field("Or paste the serializer", '<textarea data-k="code" spellcheck="false" style="min-height:340px">' + esc(t.code) + '</textarea>',
         "Must define a global <code>processEvent(record)</code> that returns a table. Runs on local LuaJIT, so the <code>json</code> and <code>log</code> modules exist but DPM-only modules (hmac, codec) do not.");
     } else {
@@ -757,7 +757,7 @@ function renderSettings(){
   let h = '<p class="muted" style="margin-top:0">Turn features on or off. Saved on the server, so it survives restarts.</p>';
   h += row("busted_button", "Run Busted button", "Shows the Run Busted buttons that check a Lua serializer.", SETTINGS.busted_button);
   h += row("detection_coverage", "Detection coverage", "After a serializer run, checks that the fields your detections use exist in the OCSF output, matched by dataSource.name. Off by default.", SETTINGS.detection_coverage);
-  h += '<h3>Lua serializers</h3><p class="muted" style="margin-top:0">' + LUALIB.length + ' found: one per saved pipeline that has a Lua step, plus .lua files in the data folder.</p>'
+  h += '<h3>Lua serializers</h3><p class="muted" style="margin-top:0">' + LUALIB.length + ' found: one per saved pipeline that has a Lua step, plus the bundled example. The zip holds only your pipelines.</p>'
      + '<p><a class="btn small" href="/api/lua.zip" download="trickle-lua.zip" style="text-decoration:none">Download all Lua (.zip)</a></p>';
   h += '<h3>Detection coverage: how to enable</h3>';
   h += '<p>Detection logic is proprietary, so this stays off until you turn it on <b>and</b> provide the file. Nothing is uploaded anywhere: the file is read on this machine, and results show only field names, rule names and counts.</p>';
