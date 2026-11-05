@@ -2070,7 +2070,9 @@ def recommend_sources(field, ent, inputs, outputs):
             why = "its value is one the rules look for"
         else:
             why = "same name as the detection field"
-        item = {"source": c["source"], "example": c["example"], "why": why, "where": c["where"]}
+        item = {"source": c["source"], "example": c["example"], "why": why, "where": c["where"],
+                "fixable": bool(c["value_match"]),
+                "fix_source": c["source"][len("unmapped."):] if c["source"].startswith("unmapped.") else c["source"]}
         if c["where"] == "input":     # is the value already carried somewhere in the output?
             for o in outputs or []:
                 um = (o.get("unmapped") or {}) if isinstance(o, dict) else {}
@@ -2120,6 +2122,44 @@ def detection_coverage(outputs, inputs=None):
         sources.append({"state": "match", "name": hit["name"], "records": len(recs), "rules": len(hit["rules"]),
                         "fields": fields, "missing": len(missing), "failed": bool(missing)})
     return {"sources": sources} if sources else None
+
+
+FIX_FIELD_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-\[\]]{0,119}$")
+
+
+def fix_lua(step, source, target):
+    """Add a mapping source -> target to a Lua serializer. Returns the patched code. Needs the standard shape
+    (local r = {}, local e = ..., setNestedField, a final 'return r'), which generated and Cato serializers have."""
+    if not (FIX_FIELD_RE.match(source or "") and FIX_FIELD_RE.match(target or "")):
+        raise ApiError("Field names may only use letters, numbers, dots, dashes and underscores.")
+    code = load_serializer_code(step)
+    for need, why in (("function processEvent", "no processEvent function"), ("setNestedField", "no setNestedField helper"),
+                      ("local r = {}", "the result table is not called r"), ("local e = ", "the input record is not called e")):
+        if need not in code:
+            raise ApiError("Cannot fix this Lua automatically (%s). Edit the Lua by hand." % why)
+    marker = "-- trickle-fix: %s from %s" % (target, source)
+    if marker in code:
+        raise ApiError("This fix is already in the Lua (%s)." % target)
+    if "." in source:
+        if "function getPath" not in code:
+            raise ApiError("Cannot fix this Lua automatically (the source is nested and the Lua has no getPath helper).")
+        get = 'getPath(e, "%s")' % source
+    else:
+        get = 'e["%s"]' % source
+    block = (
+        "    " + marker + "\n"
+        "    do\n"
+        "        local fixv = " + get + "\n"
+        "        if fixv ~= nil and fixv ~= \"\" then\n"
+        "            setNestedField(r, \"" + target + "\", fixv)\n"
+        + ("            if r.unmapped then r.unmapped[\"" + source + "\"] = nil end\n" if "." not in source else "")
+        + "        end\n"
+        "    end\n")
+    m = list(re.finditer(r"^([ \t]*)return r[ \t]*\r?\n[ \t]*end[ \t]*\r?\n?\s*$", code, re.M))
+    if not m:
+        raise ApiError("Cannot fix this Lua automatically (could not find the end of processEvent).")
+    pos = m[-1].start()
+    return code[:pos] + block + code[pos:]
 
 
 def list_pipelines():
@@ -2217,6 +2257,9 @@ class Handler(BaseHTTPRequestHandler):
             if method == "POST" and path == "/api/generate":
                 b = self._read_json()
                 return self._json(200, generate_serializer(b.get("text", ""), b.get("vendor", ""), b.get("product", ""), b.get("version", "")))
+            if method == "POST" and path == "/api/fixlua":
+                b = self._read_json()
+                return self._json(200, {"code": fix_lua(b.get("step") or {}, str(b.get("source", "")), str(b.get("target", "")))})
             if method == "GET" and path == "/api/settings":
                 return self._json(200, {"settings": load_settings(), "detections_file": bool(find_detections_file())})
             if method == "POST" and path == "/api/settings":
