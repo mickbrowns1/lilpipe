@@ -559,6 +559,7 @@ function renderResults(){
   const tabs = [];
   if(last.serializer) tabs.push(["serializer","Serializer: before / after"]);
   tabs.push(["events","Stage events"]);
+  if(last.coverage && last.coverage.sources) tabs.push(["coverage", coverageTabLabel()]);
   if(last.printed) tabs.push(["printed","Printed output"]);
   if(last.saved) tabs.push(["saved","Saved file"]);
   tabs.push(["log","Vector log" + (last.problems && last.problems.length ? " (" + last.problems.length + " issues)" : "")]);
@@ -568,6 +569,8 @@ function renderResults(){
   let b = "";
   if(tab === "serializer"){
     b = serializerHTML(last.serializer);
+  } else if(tab === "coverage"){
+    b = coverageHTML();
   } else if(tab === "events"){
     if(stageSel >= st.length) stageSel = 0;
     b += '<div class="chips">' + st.map((s, i) => '<button class="chip' + (i === stageSel ? " on" : "") + '" data-action="stage" data-i="' + i + '">'
@@ -591,6 +594,39 @@ function renderResults(){
     b += '<pre class="ev" style="max-height:420px">' + esc((last.log || []).join("\n") || "(no log output)") + '</pre>';
   }
   $("tabBody").innerHTML = b;
+}
+
+// ---------- rendering: detection coverage tab ----------
+function coverageHTML(){
+  let h = "";
+  if(!(last && last.coverage && last.coverage.sources)) return '<div class="muted">No detection coverage results for this run.</div>';
+    last.coverage.sources.forEach((c) => {
+      if(c.state === "near"){
+        h += '<div class="banner warn" style="margin:8px 0"><b>Detection coverage:</b> dataSource.name <b>' + esc(c.name) + '</b> matches no detection source. Possible match'
+          + (c.suggestions.length > 1 ? "es" : "") + ': ' + c.suggestions.map((s) => '<b>' + esc(s.name) + '</b> (' + s.rules + ' rules, ' + s.fields + ' fields)').join(", ")
+          + '. Suggestion only, nothing was changed. If it is the right product, correct Vendor / Product in the Lua step and run again.</div>';
+        return;
+      }
+      const miss = c.fields.filter((f) => f.status === "missing"), ok = c.fields.filter((f) => f.status !== "missing");
+      h += '<div class="chk" style="margin-top:8px"><span class="' + (c.failed ? "fail" : "pass") + '">' + (c.failed ? "FAIL" : "PASS") + '</span><span>Detection coverage: <b>' + esc(c.name) + '</b> ('
+        + c.rules + ' rules, ' + c.fields.length + ' fields)</span><span class="muted">' + ok.length + ' present, ' + miss.length + ' missing</span></div>';
+      if(miss.length){
+        h += '<div class="hint" style="margin:4px 0">A field can be legitimately absent for some event types. Check the rule&rsquo;s event type before treating it as a defect. Presence is counted over the ' + c.records + ' record(s) in this run.</div>'
+          + '<div class="cov">' + miss.map((f) => '<div><b class="fail">MISSING</b> <code>' + esc(f.field) + '</code> <span class="muted">used by ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
+          + ' (e.g. ' + esc(f.rule_names.slice(0, 2).join("; ")) + ')</span></div>').join("") + '</div>';
+      }
+      if(ok.length){
+        h += '<details style="margin:4px 0"><summary class="muted">Present fields (' + ok.length + ')</summary><div class="cov">' + ok.map((f) => '<div><b class="pass">OK</b> <code>' + esc(f.field)
+          + '</code> <span class="muted">' + f.present + ' of ' + f.total + ' records, ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "") + '</span></div>').join("") + '</div></details>';
+      }
+    });
+    return h;
+}
+function coverageTabLabel(){
+  const src = (last.coverage && last.coverage.sources) || [];
+  const miss = src.reduce((n, c) => n + (c.state === "match" ? c.missing : 0), 0);
+  const near = src.some((c) => c.state === "near");
+  return "Detection coverage" + (miss ? " (" + miss + " missing)" : near ? " (check name)" : "");
 }
 
 // ---------- rendering: serializer before/after ----------
@@ -639,28 +675,6 @@ function serializerHTML(S){
   if(S.checks && S.checks.length){
     h += '<div class="chk">' + S.checks.map((c) => '<span class="' + (c.failed ? "fail" : "pass") + '">' + (c.failed ? "FAIL" : "PASS") + '</span><span>' + esc(c.name)
       + '</span><span class="muted">' + c.passed + ' ok' + (c.failed ? ", " + c.failed + " failed (first: record " + c.first_fail + ")" : "") + '</span>').join("") + '</div>';
-  }
-  if(last && last.coverage && last.coverage.sources){
-    last.coverage.sources.forEach((c) => {
-      if(c.state === "near"){
-        h += '<div class="banner warn" style="margin:8px 0"><b>Detection coverage:</b> dataSource.name <b>' + esc(c.name) + '</b> matches no detection source. Possible match'
-          + (c.suggestions.length > 1 ? "es" : "") + ': ' + c.suggestions.map((s) => '<b>' + esc(s.name) + '</b> (' + s.rules + ' rules, ' + s.fields + ' fields)').join(", ")
-          + '. Suggestion only, nothing was changed. If it is the right product, correct Vendor / Product in the Lua step and run again.</div>';
-        return;
-      }
-      const miss = c.fields.filter((f) => f.status === "missing"), ok = c.fields.filter((f) => f.status !== "missing");
-      h += '<div class="chk" style="margin-top:8px"><span class="' + (c.failed ? "fail" : "pass") + '">' + (c.failed ? "FAIL" : "PASS") + '</span><span>Detection coverage: <b>' + esc(c.name) + '</b> ('
-        + c.rules + ' rules, ' + c.fields.length + ' fields)</span><span class="muted">' + ok.length + ' present, ' + miss.length + ' missing</span></div>';
-      if(miss.length){
-        h += '<div class="hint" style="margin:4px 0">A field can be legitimately absent for some event types. Check the rule&rsquo;s event type before treating it as a defect. Presence is counted over the ' + c.records + ' record(s) in this run.</div>'
-          + '<div class="cov">' + miss.map((f) => '<div><b class="fail">MISSING</b> <code>' + esc(f.field) + '</code> <span class="muted">used by ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
-          + ' (e.g. ' + esc(f.rule_names.slice(0, 2).join("; ")) + ')</span></div>').join("") + '</div>';
-      }
-      if(ok.length){
-        h += '<details style="margin:4px 0"><summary class="muted">Present fields (' + ok.length + ')</summary><div class="cov">' + ok.map((f) => '<div><b class="pass">OK</b> <code>' + esc(f.field)
-          + '</code> <span class="muted">' + f.present + ' of ' + f.total + ' records, ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "") + '</span></div>').join("") + '</div></details>';
-      }
-    });
   }
   const recs = S.records.filter((r) => r.index <= 200);
   if(serRec >= recs.length) serRec = 0;
