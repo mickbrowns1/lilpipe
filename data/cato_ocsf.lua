@@ -60,6 +60,7 @@ local FIELD_MAPPINGS = {
 local CONSUMED = {
     time = true, event_time = true, event_timestamp = true,
     action = true, risk_level = true,
+    event_type = true, event_sub_type = true,
     mitre_attack_tactics = true, mitre_attack_techniques = true,
     mitre_attack_subtechniques = true,
 }
@@ -224,6 +225,9 @@ function processEvent(event)
     setNestedField(r, "dataSource.vendor", VENDOR_NAME)
     setNestedField(r, "dataSource.name", PRODUCT_NAME)
     setNestedField(r, "metadata.product.feature.name", tostring(e.event_type or "") .. " / " .. tostring(e.event_sub_type or ""))
+    -- fields the Cato detections filter on (event.type and metadata.log_name)
+    if not isEmpty(e.event_type) then setNestedField(r, "event.type", e.event_type) end
+    if not isEmpty(e.event_sub_type) then setNestedField(r, "metadata.log_name", e.event_sub_type) end
     if t == "THREAT" then setNestedField(r, "finding_info.product_uid", "cato_sase") end
 
     -- direction id

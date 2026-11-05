@@ -35,7 +35,7 @@ local function generated_path()
 end
 
 local targets = {
-    { name = "data/cato_ocsf.lua (hand-written)", path = "data/cato_ocsf.lua" },
+    { name = "data/cato_ocsf.lua (hand-written)", path = "data/cato_ocsf.lua", cato = true },
     { name = "generated from the sample record",  path = generated_path() },
 }
 
@@ -112,7 +112,15 @@ for _, target in ipairs(targets) do
         it("keeps only true leftovers under unmapped", function()
             assert.are.equal("false", out.unmapped.src_is_site_or_vpn)
             assert.are.equal("false", out.unmapped.dest_is_site_or_vpn)
-            assert.are.equal("IPS", out.unmapped.event_sub_type)
+            if target.cato then
+                -- the Cato detections filter on these, so they are real fields now, not leftovers
+                assert.are.equal("Security", out.event.type)
+                assert.are.equal("IPS", out.metadata.log_name)
+                assert.is_nil(out.unmapped.event_type)
+                assert.is_nil(out.unmapped.event_sub_type)
+            else
+                assert.are.equal("IPS", out.unmapped.event_sub_type)
+            end
             -- values already placed in OCSF fields must NOT be duplicated
             for _, k in ipairs({ "action", "risk_level", "time", "event_time",
                                  "src_ip", "dest_ip", "src_port", "dest_port",
