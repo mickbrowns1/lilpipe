@@ -577,6 +577,7 @@ function renderInspector(){
         "Your saved pipelines plus the bundled example. Picking one copies its code into this step (Save to keep it).");
       h += field("Or paste the serializer", '<textarea data-k="code" spellcheck="false" style="min-height:340px">' + esc(t.code) + '</textarea>',
         "Must define a global <code>processEvent(record)</code> that returns a table. Runs on local LuaJIT, so the <code>json</code> and <code>log</code> modules exist but DPM-only modules (hmac, codec) do not.");
+      h += '<div style="margin:-4px 0 10px"><button class="btn small" data-action="clearLua">Clear</button></div>';
     } else {
       h += field("Fields that must match (comma separated)", '<input type="text" data-k="fields" value="' + esc(t.fields) + '">', "Events with identical values in all these fields are treated as repeats. Empty uses Vector's defaults, which include the timestamp.");
     }
@@ -1064,6 +1065,7 @@ document.addEventListener("click", async (ev) => {
   else if(a === "validate"){ doValidate(); }
   else if(a === "config"){ doConfig(); }
   else if(a === "save"){ doSave(); }
+  else if(a === "clearLua"){ const t = pipe.transforms[sel]; if(t && t.type === "lua"){ t.code = ""; t.path = ""; last = null; renderAll(); } }
   else if(a === "addType"){ pipe.source.types.push({name:"", text:""}); last = null; renderAll(); }
   else if(a === "clearType"){ const t = pipe.source.types[Number(el.dataset.i)]; if(t){ t.text = ""; } last = null; renderAll(); }
   else if(a === "clearSource"){ if(pipe.source.multi){ (pipe.source.types || []).forEach((t) => { t.text = ""; }); }  const s = pipe.source; if("text" in s) s.text = ""; if("body" in s) s.body = ""; last = null; renderAll(); }
