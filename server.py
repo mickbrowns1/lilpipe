@@ -1973,6 +1973,10 @@ def load_detection_index(path):
                     continue
                 ent = idx.setdefault(n.lower(), {"name": n, "rules": {}, "fields": {}})
                 ent["rules"][rid] = rname
+                ent.setdefault("queries", []).append((rid, rname, tuple(
+                    (p.get("key"), p.get("op"), tuple(v for v in (p.get("value") if isinstance(p.get("value"), list) else [p.get("value")])
+                                                      if isinstance(v, str) and v and v != ":anycase"))
+                    for p in pl if p.get("key") and p.get("key") != "dataSource.name")))
                 for p in pl:
                     k = p.get("key")
                     if k and k != "dataSource.name":
@@ -2108,6 +2112,73 @@ def recommend_sources(field, ent, inputs, outputs):
     return out
 
 
+GROUP_KEYS = ("event.type", "metadata.log_name")
+
+
+def _get_path(o, path):
+    cur = o
+    for k in path.split("."):
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return cur if isinstance(cur, (str, int, float)) and not isinstance(cur, bool) else None
+
+
+def _cond_ok(value, op, vals):
+    if value is None:
+        return False
+    v = str(value).lower()
+    if op in ("=", "in"):
+        return v in {x.lower() for x in vals}
+    if op == "contains":
+        return any(x.lower() in v for x in vals)
+    if op == "matches":
+        for pat in vals[:20]:
+            try:
+                if len(pat) <= 200 and re.search(pat, str(value), re.I):
+                    return True
+            except re.error:
+                pass
+        return False
+    return True      # operators we do not judge never exclude a rule
+
+
+def group_coverage(hit, recs):
+    """Per (event.type, metadata.log_name) group: which rules can match it and which of those have every field they need."""
+    groups = {}
+    for o in recs:
+        key = tuple(_get_path(o, k) for k in GROUP_KEYS)
+        groups.setdefault(key, []).append(o)
+    out = []
+    for key, grecs in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        paths = [_present_paths(o) for o in grecs]
+        rules = {}        # rid -> {name, need:set}
+        for rid, rname, pairs in hit.get("queries", []):
+            applies = True
+            for k, op, vals in pairs:
+                if k in GROUP_KEYS and not _cond_ok(key[GROUP_KEYS.index(k)], op, vals):
+                    applies = False
+                    break
+            if applies:
+                r = rules.setdefault(rid, {"name": rname, "need": set()})
+                r["need"].update(k for k, _op, _v in pairs)
+        pres = lambda f: any(f in p for p in paths)
+        field_rules = {}
+        rule_rows = []
+        for rid, r in rules.items():
+            miss = sorted(f for f in r["need"] if not pres(f))
+            rule_rows.append({"name": r["name"], "ready": not miss, "missing": miss})
+            for f in miss:
+                field_rules.setdefault(f, set()).add(r["name"])
+        fields = [{"field": f, "rules": len(rn), "rule_names": sorted(rn)[:5],
+                   "expects": expected_values(f, hit, 40)} for f, rn in field_rules.items()]
+        fields.sort(key=lambda x: (-x["rules"], x["field"]))
+        rule_rows.sort(key=lambda x: (x["ready"], x["name"]))
+        out.append({"event_type": key[0], "log_name": key[1], "records": len(grecs), "applicable": len(rules),
+                    "ready": sum(1 for x in rule_rows if x["ready"]), "missing_fields": fields, "rules": rule_rows[:200]})
+    return out
+
+
 def detection_coverage(outputs, inputs=None):
     """None when the feature is off, the file is missing, or nothing matches. Otherwise a report per dataSource.name."""
     if not load_settings().get("detection_coverage"):
@@ -2145,7 +2216,8 @@ def detection_coverage(outputs, inputs=None):
         fields.sort(key=lambda f: (f["status"] != "missing", -f["rules"], f["field"]))
         missing = [f for f in fields if f["status"] == "missing"]
         sources.append({"state": "match", "name": hit["name"], "records": len(recs), "rules": len(hit["rules"]),
-                        "fields": fields, "missing": len(missing), "failed": bool(missing)})
+                        "fields": fields, "missing": len(missing), "failed": bool(missing),
+                        "groups": group_coverage(hit, recs)})
     return {"sources": sources} if sources else None
 
 

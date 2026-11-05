@@ -584,6 +584,7 @@ function renderResults(){
   if(last.serializer) tabs.push(["serializer","Serializer: before / after"]);
   tabs.push(["events","Stage events"]);
   if(last.coverage && last.coverage.sources) tabs.push(["coverage", coverageTabLabel()]);
+  if(last.coverage && last.coverage.sources && last.coverage.sources.some((c) => c.groups)) tabs.push(["detgroups", "Detections (test)"]);
   if(last.printed) tabs.push(["printed","Printed output"]);
   if(last.saved) tabs.push(["saved","Saved file"]);
   tabs.push(["log","Vector log" + (last.problems && last.problems.length ? " (" + last.problems.length + " issues)" : "")]);
@@ -595,6 +596,8 @@ function renderResults(){
     b = serializerHTML(last.serializer);
   } else if(tab === "coverage"){
     b = coverageHTML();
+  } else if(tab === "detgroups"){
+    b = detGroupsHTML();
   } else if(tab === "events"){
     if(stageSel >= st.length) stageSel = 0;
     b += '<div class="chips">' + st.map((s, i) => '<button class="chip' + (i === stageSel ? " on" : "") + '" data-action="stage" data-i="' + i + '">'
@@ -646,6 +649,36 @@ function fixesHTML(missing){
   const done = appliedFixes();
   if(done.length) h += '<details style="margin:4px 0"><summary class="muted">Fixes applied in the Lua (' + done.length + ')</summary><div class="cov">' + done.map((d) => '<div><code>' + esc(d.target) + '</code> from <code>' + esc(d.source)
     + '</code> <button class="btn small" data-action="unfix" data-target="' + esc(d.target) + '" data-source="' + esc(d.source) + '">Undo</button></div>').join("") + '</div></details>';
+  return h;
+}
+function detGroupsHTML(){
+  const srcs = ((last && last.coverage && last.coverage.sources) || []).filter((c) => c.groups);
+  if(!srcs.length) return '<div class="muted">No detection groups for this run.</div>';
+  let h = '<div class="hint" style="margin:4px 0 10px">Test view. Records are grouped by <code>event.type</code> and <code>metadata.log_name</code>, the fields the detection rules filter on. For each group, only the rules that can match it are counted, and a rule is <b>ready</b> when every field it uses is present in that group\'s records. Use the Detection coverage tab to apply fixes.</div>';
+  srcs.forEach((c) => {
+    h += '<div class="chk" style="margin-top:8px"><span class="' + (c.failed ? "fail" : "pass") + '">' + (c.failed ? "FAIL" : "PASS") + '</span><span><b>' + esc(c.name) + '</b>: ' + c.groups.length + ' event group' + (c.groups.length > 1 ? "s" : "") + ', ' + c.records + ' record' + (c.records > 1 ? "s" : "") + '</span><span class="muted">' + c.rules + ' rules in total</span></div>';
+    c.groups.forEach((g) => {
+      const pct = g.applicable ? Math.round(100 * g.ready / g.applicable) : 0;
+      const lbl = (k, v) => '<code>' + k + '</code> = ' + (v === null || v === undefined ? '<span class="fail">not set</span>' : '<b>' + esc(String(v)) + '</b>');
+      h += '<div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0;background:var(--panel)">'
+        + '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:baseline"><span>' + lbl("event.type", g.event_type) + '</span><span>' + lbl("metadata.log_name", g.log_name) + '</span><span class="muted">' + g.records + ' record' + (g.records > 1 ? "s" : "") + '</span></div>';
+      if(!g.applicable){
+        h += '<div class="muted" style="margin-top:6px">No rule can match this group'
+          + ((g.event_type === null || g.log_name === null) ? ': the rules filter on event.type and metadata.log_name, and this group is missing one of them.' : ': no rule filters on these values.') + '</div>';
+      } else {
+        h += '<div style="margin:8px 0 4px"><div style="height:8px;border-radius:5px;background:var(--panel2);overflow:hidden"><div style="height:100%;width:' + pct + '%;background:var(--dst)"></div></div>'
+          + '<div class="muted" style="margin-top:3px"><b class="' + (g.ready === g.applicable ? "pass" : "fail") + '">' + g.ready + ' of ' + g.applicable + '</b> applicable rules ready (' + pct + '%)</div></div>';
+        if(g.missing_fields.length){
+          h += '<div class="cov">' + g.missing_fields.map((f) => '<div><b class="fail">MISSING</b> <code>' + esc(f.field) + '</code> <span class="muted">blocks ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
+            + ' (e.g. ' + esc(f.rule_names.slice(0, 2).join("; ")) + ')</span>' + expectHTML(f) + '</div>').join("") + '</div>';
+        }
+        h += '<details style="margin-top:6px"><summary class="muted">Rules for this group (' + g.rules.length + ')</summary><div class="cov">'
+          + g.rules.map((r) => '<div><b class="' + (r.ready ? "pass" : "fail") + '">' + (r.ready ? "READY" : "BLOCKED") + '</b> ' + esc(r.name)
+            + (r.missing.length ? ' <span class="muted">needs ' + r.missing.map((m) => '<code>' + esc(m) + '</code>').join(" ") + '</span>' : "") + '</div>').join("") + '</div></details>';
+      }
+      h += '</div>';
+    });
+  });
   return h;
 }
 function coverageHTML(){
