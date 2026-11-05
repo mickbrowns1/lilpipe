@@ -2303,6 +2303,7 @@ def classify_gaps(hit, recs, paths):
     A rule applies to a record when every field it filters on that the record has satisfies the rule,
     and at least one does. A field the rule needs but the record lacks is then a gap. A rule an event
     does not satisfy is why its fields are merely expected."""
+    ready = set()
     gaps = {}         # field -> {"rules": {name}, "records": set(idx), "because": str}
     skipped = {}      # field -> {"rules": {name}, "needs": str}
     applicable = set()
@@ -2329,13 +2330,15 @@ def classify_gaps(hit, recs, paths):
                         d["needs"] = "%s %s %s (this run has %s)" % (fail[0], OP_WORDS.get(fail[1], fail[1]), _fmt_vals(fail[2]), str(fail[3])[:40])
             elif passed:
                 applicable.add(rid)
+                if not missing:
+                    ready.add(rname)
                 for k in missing:
                     g = gaps.setdefault(k, {"rules": set(), "records": set(), "because": ""})
                     g["rules"].add(rname)
                     g["records"].add(i)
                     if not g["because"]:
                         g["because"] = ", ".join("%s %s %s" % (pk, OP_WORDS.get(pop, pop), _fmt_vals(pv)) for pk, pop, pv in present[:2] if pv)
-    return gaps, skipped, len(applicable)
+    return gaps, skipped, len(applicable), sorted(ready)
 
 
 OP_WORDS = {"=": "=", "in": "is one of", "contains": "contains", "matches": "matches"}
@@ -2366,7 +2369,7 @@ def detection_coverage(outputs, inputs=None):
                 sources.append({"state": "near", "name": name, "records": len(recs), "suggestions": sug})
             continue
         paths = [_present_paths(o) for o in recs]
-        gaps, skipped, n_applicable = classify_gaps(hit, recs, paths)
+        gaps, skipped, n_applicable, ready = classify_gaps(hit, recs, paths)
         fields = []
         for fname, rules in hit["fields"].items():
             present = sum(1 for p in paths if fname in p)
@@ -2387,12 +2390,13 @@ def detection_coverage(outputs, inputs=None):
             elif status == "expected":
                 sk = skipped.get(fname) or {}
                 f["needs"] = sk.get("needs", "")
+                f["suggestions"] = recommend_sources(fname, hit, inputs, recs)
             fields.append(f)
         order = {"missing": 0, "expected": 1, "present": 2}
         fields.sort(key=lambda f: (order[f["status"]], -f["rules"], f["field"]))
         missing = [f for f in fields if f["status"] == "missing"]
         sources.append({"state": "match", "name": hit["name"], "records": len(recs), "rules": len(hit["rules"]),
-                        "applicable_rules": n_applicable, "expected": sum(1 for f in fields if f["status"] == "expected"),
+                        "applicable_rules": n_applicable, "ready_rules": ready[:50], "ready_count": len(ready), "expected": sum(1 for f in fields if f["status"] == "expected"),
                         "fields": fields, "missing": len(missing), "failed": bool(missing),
                         "groups": group_coverage(hit, recs)})
     return {"sources": sources} if sources else None
