@@ -2034,6 +2034,15 @@ def find_detections_file():
     return None
 
 
+def _vstr(v):
+    """Rule values as text. Numbers count (winEventLog.id = 4662); booleans and nulls do not."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, int) and not isinstance(v, bool):
+        return str(v)
+    return None
+
+
 def load_detection_index(path):
     """dataSource.name (lowercase) -> {name, rules{id: name}, fields{field: {id: name}}}. Cached by mtime."""
     st = path.stat()
@@ -2048,7 +2057,21 @@ def load_detection_index(path):
         rid = r.get("id") or r.get("name") or "?"
         rname = r.get("name") or rid
         for q in r.get("queries", []):
-            pl = q.get("pair_list", [])
+            qtext = q.get("query") or ""
+            def _valid_key(k, _t=qtext):
+                """The export's pair_list contains fragments and rule-computed names; keep only real event fields."""
+                if not k or k.startswith("_"):
+                    return False
+                if not _t:
+                    return True
+                m = re.search(r"(?<![\w.])" + re.escape(k) + r"(?![\w.])", _t)
+                if not m:
+                    return False
+                return "." in k or re.search(r"(?<![\w.])" + re.escape(k) + r"(?![\w.])", _t.split("\n|")[0]) is not None
+            def _negated(k, _t=qtext):
+                """Inside not (...) or !=: an exclusion, so the rule does not need that field to exist."""
+                return bool(_t and (re.search(r"\bnot\s*\([^)]*" + re.escape(k), _t) or re.search(re.escape(k) + r"\s*!=", _t)))
+            pl = [p for p in q.get("pair_list", []) if p.get("key") == "dataSource.name" or (_valid_key(p.get("key")) and not _negated(p.get("key")))]
             names = {p.get("value") for p in pl if p.get("key") == "dataSource.name" and p.get("op") == "="
                      and isinstance(p.get("value"), str)}
             for n in names:
@@ -2057,8 +2080,8 @@ def load_detection_index(path):
                 ent = idx.setdefault(n.lower(), {"name": n, "rules": {}, "fields": {}})
                 ent["rules"][rid] = rname
                 ent.setdefault("queries", []).append((rid, rname, tuple(
-                    (p.get("key"), p.get("op"), tuple(v for v in (p.get("value") if isinstance(p.get("value"), list) else [p.get("value")])
-                                                      if isinstance(v, str) and v and v != ":anycase"))
+                    (p.get("key"), p.get("op"), tuple(x for x in (_vstr(v) for v in (p.get("value") if isinstance(p.get("value"), list) else [p.get("value")]))
+                                                      if x and x != ":anycase"))
                     for p in pl if p.get("key") and p.get("key") != "dataSource.name")))
                 for p in pl:
                     k = p.get("key")
@@ -2066,7 +2089,8 @@ def load_detection_index(path):
                         ent["fields"].setdefault(k, {})[rid] = rname
                         vs = p.get("value")
                         for v in (vs if isinstance(vs, list) else [vs]):
-                            if isinstance(v, str) and v and v != ":anycase" and p.get("op"):
+                            v = _vstr(v)
+                            if v and v != ":anycase" and p.get("op"):
                                 ent.setdefault("values", {}).setdefault(k, {}).setdefault(p["op"], set()).add(v)
     _DET_CACHE.clear()
     _DET_CACHE[key] = idx
@@ -2269,6 +2293,54 @@ def group_coverage(hit, recs):
     return out
 
 
+def _fmt_vals(vals, n=3):
+    vs = [str(v) for v in vals[:n]]
+    return ", ".join(vs) + (" ..." if len(vals) > n else "")
+
+
+def classify_gaps(hit, recs, paths):
+    """Which absent fields are a real gap and which are expected for the events in this run.
+    A rule applies to a record when every field it filters on that the record has satisfies the rule,
+    and at least one does. A field the rule needs but the record lacks is then a gap. A rule an event
+    does not satisfy is why its fields are merely expected."""
+    gaps = {}         # field -> {"rules": {name}, "records": set(idx), "because": str}
+    skipped = {}      # field -> {"rules": {name}, "needs": str}
+    applicable = set()
+    for i, (o, ps) in enumerate(zip(recs[:500], paths)):
+        for rid, rname, pairs in hit.get("queries", []):
+            present = [(k, op, vals) for k, op, vals in pairs if k in ps]
+            fail = None
+            passed = 0
+            for k, op, vals in present:
+                v = _get_path(o, k)
+                if v is None or not vals:
+                    continue
+                if _cond_ok(v, op, vals):
+                    passed += 1
+                else:
+                    fail = (k, op, vals, v)
+                    break
+            missing = [k for k, _op, _v in pairs if k not in ps]
+            if fail:
+                for k in missing:
+                    d = skipped.setdefault(k, {"rules": set(), "needs": ""})
+                    d["rules"].add(rname)
+                    if not d["needs"]:
+                        d["needs"] = "%s %s %s (this run has %s)" % (fail[0], OP_WORDS.get(fail[1], fail[1]), _fmt_vals(fail[2]), str(fail[3])[:40])
+            elif passed:
+                applicable.add(rid)
+                for k in missing:
+                    g = gaps.setdefault(k, {"rules": set(), "records": set(), "because": ""})
+                    g["rules"].add(rname)
+                    g["records"].add(i)
+                    if not g["because"]:
+                        g["because"] = ", ".join("%s %s %s" % (pk, OP_WORDS.get(pop, pop), _fmt_vals(pv)) for pk, pop, pv in present[:2] if pv)
+    return gaps, skipped, len(applicable)
+
+
+OP_WORDS = {"=": "=", "in": "is one of", "contains": "contains", "matches": "matches"}
+
+
 def detection_coverage(outputs, inputs=None):
     """None when the feature is off, the file is missing, or nothing matches. Otherwise a report per dataSource.name."""
     if not load_settings().get("detection_coverage"):
@@ -2294,18 +2366,33 @@ def detection_coverage(outputs, inputs=None):
                 sources.append({"state": "near", "name": name, "records": len(recs), "suggestions": sug})
             continue
         paths = [_present_paths(o) for o in recs]
+        gaps, skipped, n_applicable = classify_gaps(hit, recs, paths)
         fields = []
         for fname, rules in hit["fields"].items():
             present = sum(1 for p in paths if fname in p)
-            fields.append({"field": fname, "rules": len(rules), "present": present, "total": len(recs),
-                           "status": "present" if present else "missing",
-                           "rule_names": sorted(set(rules.values()))[:5],
-                           "expects": expected_values(fname, hit)})
-            if not present:
-                fields[-1]["suggestions"] = recommend_sources(fname, hit, inputs, recs)
-        fields.sort(key=lambda f: (f["status"] != "missing", -f["rules"], f["field"]))
+            gap = gaps.get(fname)
+            if gap:
+                status = "missing"
+            elif present:
+                status = "present"
+            else:
+                status = "expected"
+            f = {"field": fname, "rules": len(rules), "present": present, "total": len(recs), "status": status,
+                 "rule_names": sorted(set(rules.values()))[:5], "expects": expected_values(fname, hit)}
+            if gap:
+                f["gap_rules"] = sorted(gap["rules"])[:5]
+                f["gap_records"] = len(gap["records"])
+                f["because"] = gap["because"]
+                f["suggestions"] = recommend_sources(fname, hit, inputs, recs)
+            elif status == "expected":
+                sk = skipped.get(fname) or {}
+                f["needs"] = sk.get("needs", "")
+            fields.append(f)
+        order = {"missing": 0, "expected": 1, "present": 2}
+        fields.sort(key=lambda f: (order[f["status"]], -f["rules"], f["field"]))
         missing = [f for f in fields if f["status"] == "missing"]
         sources.append({"state": "match", "name": hit["name"], "records": len(recs), "rules": len(hit["rules"]),
+                        "applicable_rules": n_applicable, "expected": sum(1 for f in fields if f["status"] == "expected"),
                         "fields": fields, "missing": len(missing), "failed": bool(missing),
                         "groups": group_coverage(hit, recs)})
     return {"sources": sources} if sources else None
