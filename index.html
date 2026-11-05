@@ -563,7 +563,7 @@ function renderInspector(){
   if(sel === "source"){
     $("inspTitle").textContent = "Source";
     const s = pipe.source;
-    h += field("Type", '<select data-k="type" data-struct="1">' + opt("record","Raw record(s): paste JSON events",s.type) + opt("generator","Sample log generator",s.type) + opt("file","File (paste or path)",s.type) + opt("http","HTTP listener",s.type) + '</select>');
+    h += field("Type", '<select data-k="type" data-struct="1">' + opt("record","Paste a record (Auto Detect format)",s.type) + opt("generator","Sample log generator",s.type) + opt("file","File (paste or path)",s.type) + opt("http","HTTP listener",s.type) + '</select>');
     if(s.type === "record"){
       h += '<label class="setrow" style="border-bottom:0;padding:4px 0 8px"><input type="checkbox" data-multi="1"' + (s.multi ? " checked" : "") + '><span><b>Multiple log types</b> <span class="muted">(one stream with different event types, like Cloudflare)</span></span></label>';
     }
