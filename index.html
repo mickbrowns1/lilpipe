@@ -121,6 +121,10 @@ pre.ev{margin:0 0 8px;background:var(--code);border:1px solid var(--line);border
 }
   :root[data-theme="dark"] .k-moved{background:#1e3a5f;color:#93c5fd}:root[data-theme="dark"] .k-changed{background:#3a2e0c;color:#fbbf24}:root[data-theme="dark"] .k-retyped{background:#0f3a35;color:#5eead4}
   :root[data-theme="dark"] .k-dropped{background:#3b1512;color:#fda29b}:root[data-theme="dark"] .k-added{background:#12301c;color:#86efac}
+.pill{display:inline-block;padding:1px 9px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.2px;margin-right:6px;line-height:1.5;white-space:nowrap}
+.pill.ok{background:var(--ok-bg);color:var(--dst)}.pill.miss{background:var(--err-bg);color:var(--err)}.pill.exp{background:var(--warn-bg);color:var(--warn)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;padding:8px 10px;margin:0 0 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);font-size:12.5px}
+.legend span.d{color:var(--muted)}
 .dl{font:12px ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;padding:0 8px}.dl.add{background:var(--ok-bg);color:var(--dst)}.dl.del{background:var(--err-bg);color:var(--err)}.dl.ctx{color:var(--muted)}.dl.gap{color:var(--muted);text-align:center;font-style:italic}
 .pth{font:12.5px ui-monospace,Menlo,monospace;word-break:break-all}
 .val{font:12px ui-monospace,Menlo,monospace;color:var(--muted);word-break:break-all}
@@ -691,10 +695,18 @@ function fixesHTML(missing){
     + '</code> <button class="btn small" data-action="unfix" data-target="' + esc(d.target) + '" data-source="' + esc(d.source) + '">Undo</button></div>').join("") + '</div></details>';
   return h;
 }
+function legendHTML(){
+  return '<div class="legend"><b>Legend</b>'
+    + '<span><span class="pill ok">OK</span><span class="d">field is present</span></span>'
+    + '<span><span class="pill miss">MISSING</span><span class="d">a rule matches an event in this run but the field is absent: a real gap</span></span>'
+    + '<span><span class="pill exp">MISSING: EXPECTED</span><span class="d">field belongs to other event types than the ones in this run</span></span>'
+    + '<span><span class="pill ok">READY</span><span class="d">rule can fire on these events</span></span>'
+    + '<span><span class="pill miss">BLOCKED</span><span class="d">rule applies but needs a field the event lacks</span></span></div>';
+}
 function detGroupsHTML(){
   const srcs = ((last && last.coverage && last.coverage.sources) || []).filter((c) => c.groups);
   if(!srcs.length) return '<div class="muted">No detection groups for this run.</div>';
-  let h = '<div class="hint" style="margin:4px 0 10px">Test view. Records are grouped by <code>event.type</code> and <code>metadata.log_name</code>, the fields the detection rules filter on. For each group, only the rules that can match it are counted, and a rule is <b>ready</b> when every field it uses is present in that group\'s records. Use the Detection coverage tab to apply fixes.</div>';
+  let h = legendHTML() + '<div class="hint" style="margin:4px 0 10px">Test view. Records are grouped by <code>event.type</code> and <code>metadata.log_name</code>, the fields the detection rules filter on. For each group, only the rules that can match it are counted, and a rule is <b>ready</b> when every field it uses is present in that group\'s records. Use the Detection coverage tab to apply fixes.</div>';
   srcs.forEach((c) => {
     h += '<div class="chk" style="margin-top:8px"><span class="' + (c.failed ? "fail" : "pass") + '">' + (c.failed ? "FAIL" : "PASS") + '</span><span><b>' + esc(c.name) + '</b>: ' + c.groups.length + ' event group' + (c.groups.length > 1 ? "s" : "") + ', ' + c.records + ' record' + (c.records > 1 ? "s" : "") + '</span><span class="muted">' + c.rules + ' rules in total</span></div>';
     c.groups.forEach((g) => {
@@ -709,7 +721,7 @@ function detGroupsHTML(){
         h += '<div style="margin:8px 0 4px"><div style="height:8px;border-radius:5px;background:var(--panel2);overflow:hidden"><div style="height:100%;width:' + pct + '%;background:var(--dst)"></div></div>'
           + '<div class="muted" style="margin-top:3px"><b class="' + (g.ready === g.applicable ? "pass" : "fail") + '">' + g.ready + ' of ' + g.applicable + '</b> applicable rules ready (' + pct + '%)</div></div>';
         if(g.missing_fields.length){
-          h += '<div class="cov">' + g.missing_fields.map((f) => '<div><b class="fail">MISSING</b> <code>' + esc(f.field) + '</code> <span class="muted">blocks ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
+          h += '<div class="cov">' + g.missing_fields.map((f) => '<div><span class="pill miss">MISSING</span> <code>' + esc(f.field) + '</code> <span class="muted">blocks ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
             + ' (e.g. ' + esc(f.rule_names.slice(0, 2).join("; ")) + ')</span>' + expectHTML(f) + '</div>').join("") + '</div>';
         }
         h += '<details style="margin-top:6px"><summary class="muted">Rules for this group (' + g.rules.length + ')</summary><div class="cov">'
@@ -724,6 +736,7 @@ function detGroupsHTML(){
 function coverageHTML(){
   let h = "";
   if(!(last && last.coverage && last.coverage.sources)) return '<div class="muted">No detection coverage results for this run.</div>';
+  h += legendHTML();
     last.coverage.sources.forEach((c) => {
       if(c.state === "near"){
         h += '<div class="banner warn" style="margin:8px 0"><b>Detection coverage:</b> dataSource.name <b>' + esc(c.name) + '</b> matches no detection source. Possible match'
@@ -735,13 +748,13 @@ function coverageHTML(){
       h += '<div class="chk" style="margin-top:8px"><span class="' + (c.failed ? "fail" : "pass") + '">' + (c.failed ? "FAIL" : "PASS") + '</span><span>Detection coverage: <b>' + esc(c.name) + '</b> ('
         + c.rules + ' rules, ' + c.fields.length + ' fields)</span><span class="muted">' + ok.length + ' present, ' + miss.length + ' missing, ' + exp.length + ' expected</span></div>';
       h += '<div style="margin:4px 0"><b class="' + (c.ready_count ? "pass" : "fail") + '">' + c.ready_count + '</b> of ' + c.rules + ' rules can fire on the events in this run <span class="muted">(every condition and field they use is present)</span>'
-        + (c.ready_count ? '<details style="margin-top:2px"><summary class="muted">Show them</summary><div class="cov">' + c.ready_rules.map((n) => '<div><b class="pass">READY</b> ' + esc(n) + '</div>').join("") + '</div></details>' : "") + '</div>';
+        + (c.ready_count ? '<details style="margin-top:2px"><summary class="muted">Show them</summary><div class="cov">' + c.ready_rules.map((n) => '<div><span class="pill ok">READY</span> ' + esc(n) + '</div>').join("") + '</div></details>' : "") + '</div>';
       if(!c.applicable_rules) h += '<div class="hint" style="margin:4px 0">No rule for this source matches the events in this run, so every absent field is shown as expected. Add events that the rules look for (for example the right event IDs).</div>';
       h += fixesHTML(miss);
       const absent = miss.concat(exp);
       if(absent.length){
         h += '<div class="hint" style="margin:4px 0"><b>MISSING</b> means a rule matches an event in this run but the event lacks the field it needs. <b>MISSING: EXPECTED</b> means the field belongs to other event types than the ones in this run. Counted over the ' + c.records + ' record(s) in this run.</div>'
-          + '<div class="cov">' + absent.map((f) => '<div>' + fixBtn(f, fixables(f).length === 1 ? fixables(f)[0] : null) + (f.status === "missing" ? '<b class="fail">MISSING</b>' : '<b class="muted">MISSING: EXPECTED</b>') + ' <code>' + esc(f.field) + '</code> <span class="muted">used by ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
+          + '<div class="cov">' + absent.map((f) => '<div>' + fixBtn(f, fixables(f).length === 1 ? fixables(f)[0] : null) + (f.status === "missing" ? '<span class="pill miss">MISSING</span>' : '<span class="pill exp">MISSING: EXPECTED</span>') + ' <code>' + esc(f.field) + '</code> <span class="muted">used by ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "")
           + ' (e.g. ' + esc((f.gap_rules || f.rule_names).slice(0, 2).join("; ")) + ')</span>'
           + (f.status === "expected" && f.needs ? '<div class="rec muted">expected for these events: the rules that use it need ' + esc(f.needs) + '</div>' : "")
           + (f.because ? '<div class="rec">needed in ' + f.gap_records + ' event' + (f.gap_records > 1 ? "s" : "") + ' of this run, where <code>' + esc(f.because) + '</code></div>' : "")
@@ -752,7 +765,7 @@ function coverageHTML(){
           + '</div>').join("") + '</div><div class="hint">Nothing in the Lua changes unless you press Fix. They come from matching your rules&rsquo; values against the fields in this run, so more event types in the sample give better suggestions.</div>';
       }
       if(ok.length){
-        h += '<details style="margin:4px 0"><summary class="muted">Present fields (' + ok.length + ')</summary><div class="cov">' + ok.map((f) => '<div><b class="pass">OK</b> <code>' + esc(f.field)
+        h += '<details style="margin:4px 0"><summary class="muted">Present fields (' + ok.length + ')</summary><div class="cov">' + ok.map((f) => '<div><span class="pill ok">OK</span> <code>' + esc(f.field)
           + '</code> <span class="muted">' + f.present + ' of ' + f.total + ' records, ' + f.rules + ' rule' + (f.rules > 1 ? "s" : "") + '</span>' + expectHTML(f) + '</div>').join("") + '</div></details>';
       }
     });
