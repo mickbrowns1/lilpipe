@@ -611,7 +611,6 @@ function renderInspector(){
     } else if(t.type === "sample"){
       h += field("Keep 1 of every N events", '<input type="number" data-k="n" min="1" value="' + esc(t.n) + '">', "N = 10 keeps about 10% of events.");
     } else if(t.type === "lua"){
-      h += field("OCSF version (used by Generate)", '<input type="text" data-k="ocsf" placeholder="1.8.0" value="' + esc(t.ocsf || "") + '">', "Stamped into metadata.version. Empty means 1.8.0.");
       h += field("Vendor (used by Generate)", '<input type="text" data-k="vendor" placeholder="Cisco" value="' + esc(t.vendor || "") + '">', "Stamped into metadata.product.vendor_name and dataSource.vendor. Empty uses the vendor in the sample (CEF and LEEF headers).");
       h += field("Product (used by Generate)", '<input type="text" data-k="product" placeholder="Meraki" value="' + esc(t.product || "") + '">', "Stamped into metadata.product.name and dataSource.name. Vendor and product differ (Cisco / Meraki, Cisco / ISE, Cisco / IronPort). You can also type <code>Vendor / Product</code> in either box and it is split on the slash.");
       h += '<div class="insp-actions" style="margin:12px 0 4px"><button class="btn small" data-action="genLua">Generate from sample record</button> ' + (SETTINGS.busted_button ? '<button class="btn small" data-action="busted">Run Busted checks</button> ' : "") + '<button class="btn small" data-action="starterLua">Reset to starter example</button></div>';
