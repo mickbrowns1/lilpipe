@@ -225,10 +225,10 @@ header .helpBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:20p
         <li>Click the <b>Lua serializer</b> box and paste your code, or type a file path (re-read on every run, so you can edit in your own editor and press Run again).</li>
         <li>Your code must define <code>function processEvent(record)</code> that returns a table.</li>
         <li>Press Run.</li></ol></details>
-      <details><summary>What do MOVED, TYPE CHANGED, NOT CARRIED and ADDED mean?</summary>
-        <p><b>MOVED</b>: same value, new field name (<code>src_ip</code> &rarr; <code>src_endpoint.ip</code>). <b>TYPE CHANGED</b>: same value, different type (<code>"47046"</code> &rarr; <code>47046</code>). <b>CHANGED</b>: same field, new value. <b>NOT CARRIED</b>: the value is not in the output, so it was dropped or transformed. <b>ADDED</b>: new in the output, such as <code>class_uid</code> or <code>dataSource.*</code>. <b>SAME</b>, <b>UNMAPPED</b> and <b>EMPTY</b> are hidden by default; click their chips to show them.</p></details>
-      <details><summary>Why does a field I converted show as NOT CARRIED plus ADDED?</summary>
-        <p>The comparison matches by value. If your serializer transforms a value (for example <code>risk_level "Medium"</code> becomes <code>severity_id 3</code>, or an ISO time becomes epoch milliseconds), the original value no longer appears, so it shows as NOT CARRIED and the new field as ADDED. That is expected.</p></details>
+      <details><summary>What do MOVED, TYPE CHANGED, DROPPED and ADDED mean?</summary>
+        <p><b>MOVED</b>: same value, new field name (<code>src_ip</code> &rarr; <code>src_endpoint.ip</code>). <b>TYPE CHANGED</b>: same value, different type (<code>"47046"</code> &rarr; <code>47046</code>). <b>CHANGED</b>: same field, new value. <b>DROPPED</b>: the value is not in the output, so it was dropped or transformed. <b>ADDED</b>: new in the output, such as <code>class_uid</code> or <code>dataSource.*</code>. <b>SAME</b>, <b>UNMAPPED</b> and <b>EMPTY</b> are hidden by default; click their chips to show them.</p></details>
+      <details><summary>Why does a field I converted show as DROPPED plus ADDED?</summary>
+        <p>The comparison matches by value. If your serializer transforms a value (for example <code>risk_level "Medium"</code> becomes <code>severity_id 3</code>, or an ISO time becomes epoch milliseconds), the original value no longer appears, so it shows as DROPPED and the new field as ADDED. That is expected.</p></details>
       <details><summary>What are the PASS/FAIL checks above the diff?</summary>
         <p>Quick OCSF sanity checks on every record: class, category and activity are set; <code>type_uid = class_uid &times; 100 + activity_id</code>; <code>time</code> is a number in epoch milliseconds; <code>metadata.version</code> and <code>metadata.product.*</code> are set; and <code>dataSource.category/vendor/name</code> are set and match <code>metadata.product</code> (needed for events to show up in XDR search). A FAIL shows which record failed first.</p></details>
       <details><summary>What is the &ldquo;Console lint&rdquo; box?</summary>
@@ -439,7 +439,7 @@ const pathHint = () => ENV.docker ? " Running in Docker: put the file in the <co
 let serRec = 0;                // which record the before/after view shows
 let serView = "diff";          // "diff" | "output" | "input"
 const serHide = {unchanged: true, empty: true, unmapped: true};   // untouched passthrough is hidden by default
-const KIND_LABEL = {moved:"MOVED", changed:"CHANGED", retyped:"TYPE CHANGED", unmapped:"UNMAPPED", dropped:"NOT CARRIED", added:"ADDED", empty:"EMPTY", unchanged:"SAME"};
+const KIND_LABEL = {moved:"MOVED", changed:"CHANGED", retyped:"TYPE CHANGED", unmapped:"UNMAPPED", dropped:"DROPPED", added:"ADDED", empty:"EMPTY", unchanged:"SAME"};
 const KIND_ORDER = ["moved","changed","retyped","unmapped","dropped","added","empty","unchanged"];
 const KIND_HELP = {
   moved:"Same value, different field name", changed:"Same field, different value", retyped:"Same value, different type (for example string to number)",
@@ -887,7 +887,7 @@ function serializerHTML(S){
         '<button class="chip' + (serHide[k] ? "" : " on") + '" title="' + esc(KIND_HELP[k]) + '" data-action="serKind" data-k="' + k + '">' + KIND_LABEL[k] + ' (' + sm[k] + ')</button>').join("") + '</div>';
       const rows = rec.diff.rows.filter((r) => !serHide[r.kind]);
       h += rows.length ? rows.map(diffRowHTML).join("") : '<div class="muted">Nothing to show with the current filters.</div>';
-      h += '<div class="hint" style="margin-top:10px">Matching is by value, so it is a guide rather than proof. A value that was transformed (for example an ISO time turned into epoch milliseconds) shows as NOT CARRIED plus ADDED.</div>';
+      h += '<div class="hint" style="margin-top:10px">Matching is by value, so it is a guide rather than proof. A value that was transformed (for example an ISO time turned into epoch milliseconds) shows as DROPPED plus ADDED.</div>';
     } else {
       const obj = serView === "output" ? rec.output : rec.input;
       h += '<pre class="ev" style="max-height:480px">' + esc(JSON.stringify(obj, null, 2)) + '</pre>';
