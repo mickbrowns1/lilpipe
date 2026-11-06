@@ -432,7 +432,7 @@ let tab = "events";
 let stageSel = 0;
 let menuAt = null;             // link index with open "add" menu
 let cfgText = null;
-let SETTINGS = {detection_coverage: false, busted_button: true};
+let SETTINGS = {detection_coverage: false, busted_button: true, gap_generation: false};
 let DETFILE = false;
 let ENV = {};                  // /api/status, so hints can match how the app is running
 const pathHint = () => ENV.docker ? " Running in Docker: put the file in the <code>data</code> folder next to docker-compose.yml and use <code>/data/yourfile</code>." : "";
@@ -854,6 +854,15 @@ function diffRowHTML(r){
   }
   return '<div class="drow">' + tag + body + '</div>';
 }
+function gapNote(gp){
+  if(!gp) return "";
+  if(gp.state === "nofile") return '<div style="margin-top:6px"><b>Detection-aware Generate</b> is on, but no detection file was found (see Settings).</div>';
+  if(gp.state === "nomatch") return '<div style="margin-top:6px"><b>Detection-aware Generate</b>: no detections found for dataSource.name <code>' + esc(gp.name) + '</code>. Set Vendor / Product to match the name the rules use.</div>';
+  return '<div style="margin-top:6px"><b>Detection-aware Generate</b> (' + gp.rules + ' rules for <code>' + esc(gp.name) + '</code>): mapped <b>' + gp.added.length + '</b> field' + (gp.added.length === 1 ? "" : "s") + ' the rules look for'
+    + (gp.added.length ? ': ' + gp.added.slice(0, 8).map((a) => '<code>' + esc(a.field) + '</code> &larr; <code>' + esc(a.source) + '</code>').join(", ") + (gp.added.length > 8 ? ", ..." : "") : "")
+    + '. ' + gp.unresolved_count + ' more field' + (gp.unresolved_count === 1 ? "" : "s") + ' had no matching value in this sample'
+    + (gp.unresolved.length ? ' (' + gp.unresolved.slice(0, 6).map((u) => esc(u)).join(", ") + (gp.unresolved_count > 6 ? ", ..." : "") + ')' : "") + ': they may belong to other event types.</div>';
+}
 function deadLetters(){
   const S = last && last.serializer;
   if(!S || !S.records) return [];
@@ -947,6 +956,7 @@ function renderSettings(){
   h += '<div class="setrow"><span><b>Theme</b><br><span class="muted">Currently ' + cur + '. Remembered in this browser.</span></span> <button class="btn small" data-action="theme" style="margin-left:auto">Switch to ' + (cur === "dark" ? "light" : "dark") + '</button></div>';
   h += row("busted_button", "Run Busted button", "Shows the Run Busted buttons that check a Lua serializer.", SETTINGS.busted_button);
   h += row("detection_coverage", "Detection coverage", "After a serializer run, checks that the fields your detections use exist in the OCSF output, matched by dataSource.name. Off by default.", SETTINGS.detection_coverage);
+  h += row("gap_generation", "Detection-aware Generate", "When you press Generate, also map the fields your detections look for, using source fields in the sample whose values match what the rules compare against. Needs the detection file below and a vendor/product that matches a dataSource.name. Off by default.", SETTINGS.gap_generation);
   h += '<h3>Lua serializers</h3><p class="muted" style="margin-top:0">' + LUALIB.length + ' found: one per saved pipeline that has a Lua step, plus the bundled example. The zip holds only your pipelines.</p>'
      + '<p><a class="btn small" href="/api/lua.zip" download="trickle-lua.zip" style="text-decoration:none">Download all Lua (.zip)</a></p>';
   h += '<h3>Detection coverage: how to enable</h3>';
@@ -1119,7 +1129,8 @@ document.addEventListener("click", async (ev) => {
       banner("ok", "Read the sample as <b>" + esc(g.format) + "</b> (vendor <b>" + esc(g.vendor) + "</b>, product <b>" + esc(g.product) + "</b>). Generated a <b>" + esc(g.class_name) + "</b> (" + g.class_uid + ") serializer: " + g.mapped.length + " fields mapped, "
         + g.handled.length + " handled (time, severity, action, MITRE), " + g.unmapped.length + " kept under <code>unmapped</code>"
         + (g.unmapped.length ? " (" + esc(g.unmapped.slice(0, 6).join(", ")) + (g.unmapped.length > 6 ? ", ..." : "") + ")" : "")
-        + ". Press <b>Run pipeline</b> to see before and after, edit the MAP table to fix any wrong guesses, then press <b>Save</b> (left) to keep this pipeline and its Lua.");
+        + ". Press <b>Run pipeline</b> to see before and after, edit the MAP table to fix any wrong guesses, then press <b>Save</b> (left) to keep this pipeline and its Lua."
+        + gapNote(g.gap));
     } catch(e){ banner("err", esc(e.message)); }
   }
   else if(a === "fixlua"){

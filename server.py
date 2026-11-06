@@ -1294,6 +1294,7 @@ def generate_serializer(text, vendor="", product="", version="", forced="auto", 
             maps.append((k, hit[0], hit[1]))
             if hit[0] == "finding_info.title":
                 maps.append((k, "malware[0].name", "s"))
+    gap = gap_maps(recs, product or vendor, maps, used_targets, keys)
     mapped_names = {m[0] for m in maps}
 
     nset = {m[1] for m in maps}
@@ -1355,7 +1356,7 @@ def generate_serializer(text, vendor="", product="", version="", forced="auto", 
                  ("__EXTRA__", extra)]:
         code = code.replace(a, b)
     unmapped = [k for k in keys if k not in mapped_names and k not in consumed]
-    return {"code": code, "class_name": cname, "class_uid": cls, "fmt": fmt or "json", "spec": spec, "format": FORMAT_NAMES.get(fmt, "JSON") if fmt else "JSON", "vendor": vendor, "product": product,
+    return {"code": code, "class_name": cname, "class_uid": cls, "fmt": fmt or "json", "spec": spec, "gap": gap, "format": FORMAT_NAMES.get(fmt, "JSON") if fmt else "JSON", "vendor": vendor, "product": product,
             "mapped": [{"source": m[0], "target": m[1]} for m in maps],
             "handled": sorted(consumed), "unmapped": unmapped}
 
@@ -1413,6 +1414,8 @@ def generate_multi(types, vendor="", product="", version=""):
             inner = inner.rstrip() + "\n" + match
         chunks.append((i, label, keys, inner))
         summary["mapped"].extend(g["mapped"])
+        if g.get("gap"):
+            summary.setdefault("gaps", []).append(g["gap"])
         summary["handled"].update(g["handled"])
         summary["unmapped"].extend(g["unmapped"])
         summary["types"].append({"name": label, "class_name": g["class_name"], "class_uid": g["class_uid"]})
@@ -1471,7 +1474,18 @@ def generate_multi(types, vendor="", product="", version=""):
     names = [t["class_name"] + " (" + str(t["class_uid"]) + ")" for t in summary["types"]]
     return {"code": "\n".join(out), "class_name": "%d log types: %s" % (len(chunks), ", ".join(names)), "class_uid": "multiple",
             "format": "JSON", "vendor": vendor, "product": product, "mapped": summary["mapped"],
-            "handled": sorted(summary["handled"]), "unmapped": summary["unmapped"], "types": summary["types"]}
+            "handled": sorted(summary["handled"]), "unmapped": summary["unmapped"], "types": summary["types"],
+            "gap": _merge_gaps(summary.get("gaps"))}
+
+
+def _merge_gaps(gaps):
+    if not gaps:
+        return None
+    oks = [g for g in gaps if g.get("state") == "ok"]
+    if not oks:
+        return gaps[0]
+    return {"state": "ok", "name": oks[0]["name"], "rules": oks[0]["rules"], "added": [a for g in oks for a in g["added"]],
+            "unresolved": sorted({u for g in oks for u in g["unresolved"]})[:40], "unresolved_count": sum(g["unresolved_count"] for g in oks)}
 
 
 def to_lua(v):
@@ -2208,7 +2222,7 @@ def pipeline_path(name):
 # Settings and detection coverage (off by default)
 # ---------------------------------------------------------------------------
 
-SETTINGS_DEFAULTS = {"detection_coverage": False, "busted_button": True}
+SETTINGS_DEFAULTS = {"detection_coverage": False, "busted_button": True, "gap_generation": False}
 MAX_DETECTION_BYTES = 100 * 1024 * 1024
 _DET_CACHE = {}
 
@@ -2620,6 +2634,40 @@ def detection_coverage(outputs, inputs=None):
                         "fields": fields, "missing": len(missing), "failed": bool(missing),
                         "groups": group_coverage(hit, recs)})
     return {"sources": sources} if sources else None
+
+
+GAP_SKIP = {"dataSource.name", "dataSource.vendor", "dataSource.category"}
+
+
+def gap_maps(recs, name, maps, used_targets, keys):
+    """Detection-aware Generate: add mappings for fields the product's detections look for, when a source field in
+    the sample carries a value those rules compare against. Off unless the setting is on. Returns a summary or None."""
+    if not load_settings().get("gap_generation"):
+        return None
+    path = find_detections_file()
+    if not path:
+        return {"state": "nofile"}
+    hit = load_detection_index(path).get((name or "").lower())
+    if not hit:
+        return {"state": "nomatch", "name": name}
+    added, unresolved = [], []
+    fields = sorted(hit["fields"].items(), key=lambda kv: (-len(kv[1]), kv[0]))[:80]
+    keyset = set(keys)
+    for field, rules in fields:
+        if field in used_targets or field in GAP_SKIP:
+            continue
+        pick = next((x for x in recommend_sources(field, hit, recs, [])
+                     if x["fixable"] and x["where"] == "input" and x["source"] in keyset), None)
+        if pick:
+            vals = [v for ev in expected_values(field, hit, cap=50) for v in ev["values"]]
+            numeric = bool(vals) and all(re.match(r"^-?\d+$", v) for v in vals)
+            maps.append((pick["source"], field, "n" if numeric else "s"))
+            used_targets.add(field)
+            added.append({"field": field, "source": pick["source"], "matched": pick["matched"][:3], "rules": len(rules)})
+        else:
+            unresolved.append(field)
+    return {"state": "ok", "name": hit["name"], "rules": len(hit["rules"]), "added": added, "unresolved": unresolved[:40],
+            "unresolved_count": len(unresolved)}
 
 
 FIX_FIELD_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-\[\]]{0,119}$")
